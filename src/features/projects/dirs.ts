@@ -30,10 +30,30 @@ export function findCodeDir(dir: string): string {
   return child ? path.join(dir, child.name) : dir;
 }
 
+/**
+ * Projetos cujo código vive fora da pasta do BrandForge (ex.: o site, mantido em C:\Users\…\GitHub).
+ * Formato no .env: PROJECT_CODE_DIRS=nome-da-pasta=C:\caminho;outro=C:\outro
+ */
+function codeDirOverrides(): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const pair of (process.env.PROJECT_CODE_DIRS ?? "").split(";")) {
+    const i = pair.indexOf("=");
+    if (i > 0) map.set(pair.slice(0, i).trim(), pair.slice(i + 1).trim());
+  }
+  return map;
+}
+
+/** Onde o código do projeto está de fato: o caminho do .env, se existir, ou a detecção automática. */
+export function codeDirFor(name: string): string {
+  const override = codeDirOverrides().get(name);
+  if (override && existsSync(override)) return override;
+  return findCodeDir(path.join(PROJECTS_ROOT, name));
+}
+
 /** Pasta de código de um projeto pelo nome; `null` se o nome não for uma pasta conhecida (evita "../"). */
 export function projectCodeDir(name: string): string | null {
   if (!listProjectDirs().includes(name)) return null;
-  return findCodeDir(path.join(PROJECTS_ROOT, name));
+  return codeDirFor(name);
 }
 
 export function isGitRepo(dir: string): boolean {

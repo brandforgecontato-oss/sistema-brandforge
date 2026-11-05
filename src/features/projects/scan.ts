@@ -8,7 +8,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { PROJECTS_ROOT } from "@/lib/paths";
-import { findCodeDir, listProjectDirs } from "./dirs";
+import { codeDirFor, listProjectDirs } from "./dirs";
 
 export { listProjectDirs };
 
@@ -134,7 +134,7 @@ async function readAgentActivity(dirs: string[]): Promise<AgentActivity | null> 
 
 export async function scanProject(name: string): Promise<ProjectInfo> {
   const dir = path.join(PROJECTS_ROOT, name);
-  const codeDir = findCodeDir(dir);
+  const codeDir = codeDirFor(name);
   const isGit = existsSync(path.join(codeDir, ".git"));
   const [log, status, claudeState, agent] = await Promise.all([
     isGit ? git(codeDir, ["log", "-1", "--format=%ct%x09%s"]) : null,
