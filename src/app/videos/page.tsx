@@ -1,4 +1,5 @@
 import { AutoRefresh } from "@/components/auto-refresh";
+import { VideoUpload } from "@/components/video-upload";
 import { Badge, Card, PageHeader, buttonClass, inputClass, timeAgo } from "@/components/ui";
 import { VIDEO_DIRS } from "@/lib/paths";
 import { addVideoFromUrl, importFile } from "@/features/videos/actions";
@@ -42,7 +43,11 @@ export default async function VideosPage() {
         </p>
       )}
 
-      <div className="mb-8 grid gap-4 md:grid-cols-2">
+      <div className="mb-4 grid gap-4 md:grid-cols-2">
+        <Card title="Enviar do computador">
+          <VideoUpload />
+        </Card>
+
         <Card title="Baixar por link">
           <form action={addVideoFromUrl} className="space-y-2">
             <input name="url" type="url" required placeholder="https://www.youtube.com/watch?v=…" className={`${inputClass} w-full`} />
@@ -52,7 +57,9 @@ export default async function VideosPage() {
           </form>
           <p className="mt-2 text-xs text-body">YouTube, Instagram, TikTok e outros. Use só vídeos que você tem direito de usar.</p>
         </Card>
+      </div>
 
+      <div className="mb-8">
         <Card title="Arquivos na pasta de entrada">
           <p className="mb-3 break-all font-mono text-xs text-body">{VIDEO_DIRS.entrada}</p>
           <ul className="space-y-2">
@@ -71,7 +78,7 @@ export default async function VideosPage() {
               </li>
             ))}
             {files.length === 0 && (
-              <li className="text-sm text-body">Nenhum arquivo novo. Copie vídeos para a pasta acima e recarregue a página.</li>
+              <li className="text-sm text-body">Nenhum arquivo novo. Também dá para copiar vídeos direto para esta pasta e recarregar a página.</li>
             )}
           </ul>
         </Card>
