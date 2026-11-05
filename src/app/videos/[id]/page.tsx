@@ -98,6 +98,27 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
                           Fim (s)
                           <input name="end" defaultValue={(clip.endMs / 1000).toFixed(1)} inputMode="decimal" className={`${inputClass} mt-1 block w-24`} />
                         </label>
+                      </div>
+                      <div className="flex flex-wrap items-end gap-3">
+                        <label className="text-xs text-body">
+                          Enquadramento
+                          <select name="framing" defaultValue={clip.framing} className={`${inputClass} mt-1 block`}>
+                            <option value="desfocado">Vídeo inteiro + fundo desfocado</option>
+                            <option value="preencher">Preencher a tela (recorta as laterais)</option>
+                          </select>
+                        </label>
+                        <label className="text-xs text-body">
+                          Posição do recorte: esquerda ↔ direita
+                          <input
+                            type="range"
+                            name="cropX"
+                            min={0}
+                            max={100}
+                            step={5}
+                            defaultValue={clip.cropX}
+                            className="mt-2 block w-48 accent-[var(--color-gold-deep)]"
+                          />
+                        </label>
                         <button className={ghostButtonClass}>Salvar ajustes</button>
                       </div>
                     </form>

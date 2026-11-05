@@ -87,6 +87,10 @@ export const videos = sqliteTable("videos", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
 });
 
+/** "desfocado" = vídeo inteiro sobre fundo desfocado; "preencher" = recorta para ocupar a tela toda (9:16). */
+export const CLIP_FRAMINGS = ["desfocado", "preencher"] as const;
+export type ClipFraming = (typeof CLIP_FRAMINGS)[number];
+
 export const CLIP_STATUSES = ["proposto", "na_fila", "renderizando", "pronto", "erro", "descartado"] as const;
 export type ClipStatus = (typeof CLIP_STATUSES)[number];
 
@@ -103,6 +107,9 @@ export const clips = sqliteTable(
     reason: text("reason"),
     startMs: integer("start_ms").notNull(),
     endMs: integer("end_ms").notNull(),
+    framing: text("framing", { enum: CLIP_FRAMINGS }).notNull().default("desfocado"),
+    /** Posição horizontal do recorte no modo "preencher": 0 = esquerda, 50 = centro, 100 = direita. */
+    cropX: integer("crop_x").notNull().default(50),
     status: text("status", { enum: CLIP_STATUSES }).notNull().default("proposto"),
     outputFile: text("output_file"),
     error: text("error"),

@@ -31,7 +31,7 @@ Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge
 - whisper.cpp: build `b5454` CUDA 11.8 em `DATA_DIR\ferramentas\whisper\Release`. O zip **não traz** `cublas64_11.dll`/`cublasLt64_11.dll` — foram copiados do redist oficial da NVIDIA (libcublas 11.11.3.6). Sem eles cai para CPU em silêncio ("no GPU found").
 - Transcrição normalizada em `trabalho/<id>/transcricao.json` (segmentos + palavras com tempo, montadas a partir dos tokens do `-ojf`).
 - Claude: `claude.exe -p --json-schema … --tools "" --setting-sources "" --strict-mcp-config --no-session-persistence`, resposta em `structured_output`. Usa a assinatura logada; sem chave de API. `cwd` = pasta de trabalho do vídeo (fora do BrandForge, para não ler CLAUDE.md de projeto).
-- Render: fundo desfocado + vídeo inteiro centralizado (serve para horizontal e vertical); legenda `.ass` gerada em [captions.ts](src/features/videos/captions.ts). O FFmpeg roda com `cwd` na pasta do corte porque o filtro `subtitles` não aceita `C:\` sem escapar.
+- Render (`buildFrameFilter`): por corte, "desfocado" = vídeo inteiro centralizado sobre fundo desfocado, ou "preencher" = amplia e recorta para 9:16 com `cropX` (0 esquerda … 100 direita) escolhido na página; legenda `.ass` gerada em [captions.ts](src/features/videos/captions.ts). O FFmpeg roda com `cwd` na pasta do corte porque o filtro `subtitles` não aceita `C:\` sem escapar.
 - Replanejar apaga só os cortes ainda "proposto"; renderizados ficam.
 - HyperFrames (animações) ainda não entrou — o render atual é só FFmpeg.
 
@@ -52,5 +52,5 @@ Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge
 
 ## Próximos passos
 
-- Vídeo: animações com HyperFrames; opção de recorte central (rosto) em vez de fundo desfocado.
+- Vídeo: animações com HyperFrames; detectar o rosto para posicionar o recorte sozinho (hoje a posição é manual).
 - Agentes: avisar no celular quando um pedido terminar; modo com comandos liberados por lista (ex.: `npm run build`, `git status`).

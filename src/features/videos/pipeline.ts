@@ -180,6 +180,24 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
 
 // ---------- 4. Renderizar um corte aprovado ----------
 
+/**
+ * Monta o quadro 1080×1920 e queima a legenda.
+ * - "desfocado": vídeo inteiro centralizado sobre uma cópia ampliada e desfocada (nada é cortado).
+ * - "preencher": amplia até cobrir a tela e recorta; `cropX` escolhe o trecho horizontal (0 esquerda … 100 direita).
+ */
+export function buildFrameFilter(framing: "desfocado" | "preencher", cropX: number): string {
+  if (framing === "preencher") {
+    const x = (Math.min(100, Math.max(0, cropX)) / 100).toFixed(2);
+    return `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*${x}:(ih-oh)/2,setsar=1,subtitles=legenda.ass[v]`;
+  }
+  return [
+    "[0:v]split=2[a][b]",
+    "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[bg]",
+    "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
+    "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,subtitles=legenda.ass[v]",
+  ].join(";");
+}
+
 export async function renderClip(payload: Record<string, unknown>): Promise<string> {
   const clipId = Number(payload.clipId);
   const clip = db.select().from(clips).where(eq(clips.id, clipId)).get();
@@ -203,12 +221,7 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
 
     const outputFile = `${slug(video.title)}-corte-${clip.id}.mp4`;
     const output = path.join(VIDEO_DIRS.saida, outputFile);
-    const filter = [
-      "[0:v]split=2[a][b]",
-      "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[bg]",
-      "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
-      "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,subtitles=legenda.ass[v]",
-    ].join(";");
+    const filter = buildFrameFilter(clip.framing, clip.cropX);
 
     await runTool(
       "ffmpeg",

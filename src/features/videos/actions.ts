@@ -8,7 +8,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db/client";
-import { clips, videos } from "@/db/schema";
+import { CLIP_FRAMINGS, type ClipFraming, clips, videos } from "@/db/schema";
 import { VIDEO_DIRS } from "@/lib/paths";
 import { enqueue } from "@/worker/queue";
 
@@ -82,10 +82,13 @@ export async function updateClip(formData: FormData): Promise<void> {
   const start = Number(String(formData.get("start")).replace(",", "."));
   const end = Number(String(formData.get("end")).replace(",", "."));
   const hook = clean(formData.get("hook"));
+  const framingRaw = String(formData.get("framing") ?? "desfocado") as ClipFraming;
+  const framing = CLIP_FRAMINGS.includes(framingRaw) ? framingRaw : "desfocado";
+  const cropX = Math.min(100, Math.max(0, Math.round(Number(formData.get("cropX") ?? 50)) || 0));
   const clip = db.select().from(clips).where(eq(clips.id, id)).get();
   if (!clip || !Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return;
   db.update(clips)
-    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "" })
+    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "", framing, cropX })
     .where(eq(clips.id, id))
     .run();
   refresh(clip.videoId);
