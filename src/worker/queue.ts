@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, lte } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, notInArray } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { type JobType, jobs } from "@/db/schema";
@@ -9,13 +9,22 @@ export function enqueue(type: JobType, payload: Record<string, unknown> = {}, ru
   return db.insert(jobs).values({ type, payload, runAt }).returning({ id: jobs.id }).get();
 }
 
-/** Pega o próximo job vencido e marca como "rodando" na mesma transação. */
-export function claimNext() {
+export type Lane = { only?: JobType[]; except?: JobType[] };
+
+/** Pega o próximo job vencido (da faixa pedida) e marca como "rodando" na mesma transação. */
+export function claimNext(lane: Lane = {}) {
   return db.transaction((tx) => {
     const next = tx
       .select()
       .from(jobs)
-      .where(and(eq(jobs.status, "pendente"), lte(jobs.runAt, new Date())))
+      .where(
+        and(
+          eq(jobs.status, "pendente"),
+          lte(jobs.runAt, new Date()),
+          lane.only ? inArray(jobs.type, lane.only) : undefined,
+          lane.except ? notInArray(jobs.type, lane.except) : undefined,
+        ),
+      )
       .orderBy(asc(jobs.runAt))
       .limit(1)
       .get();
@@ -32,8 +41,8 @@ export function complete(id: number, result: string) {
   db.update(jobs).set({ status: "concluido", finishedAt: new Date(), result, lastError: null }).where(eq(jobs.id, id)).run();
 }
 
-export function fail(id: number, attempts: number, error: string) {
-  const retry = attempts < MAX_ATTEMPTS;
+export function fail(id: number, attempts: number, error: string, maxAttempts = MAX_ATTEMPTS) {
+  const retry = attempts < maxAttempts;
   const backoffMs = 60_000 * 2 ** (attempts - 1);
   db.update(jobs)
     .set({

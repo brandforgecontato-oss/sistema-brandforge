@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 const createdAt = () =>
   integer("created_at", { mode: "timestamp_ms" })
@@ -111,7 +111,44 @@ export const clips = sqliteTable(
   (t) => [index("clips_video_idx").on(t.videoId)],
 );
 
-export const JOB_TYPES = ["fetch_trends", "video_download", "video_transcribe", "video_plan", "clip_render"] as const;
+export const AGENT_MODES = ["planejar", "editar"] as const;
+export type AgentMode = (typeof AGENT_MODES)[number];
+
+export const AGENT_RUN_STATUSES = ["na_fila", "rodando", "concluido", "erro", "cancelado"] as const;
+export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+/** Um pedido feito pelo painel a um agente Claude Code dentro de um projeto (Fase 3). */
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    /** Nome da pasta do projeto dentro de PROJECTS_ROOT. */
+    project: text("project").notNull(),
+    prompt: text("prompt").notNull(),
+    mode: text("mode", { enum: AGENT_MODES }).notNull().default("planejar"),
+    model: text("model").notNull().default("sonnet"),
+    status: text("status", { enum: AGENT_RUN_STATUSES }).notNull().default("na_fila"),
+    /** Pedido anterior que esta execução continua (mesma conversa do Claude). */
+    parentId: integer("parent_id"),
+    /** Sessão do Claude a retomar (herdada do pedido anterior). */
+    resumeSessionId: text("resume_session_id"),
+    sessionId: text("session_id"),
+    result: text("result"),
+    costUsd: real("cost_usd"),
+    durationMs: integer("duration_ms"),
+    turns: integer("turns"),
+    /** Ações que o agente quis fazer e foram bloqueadas (ex.: comandos no terminal). */
+    denials: text("denials", { mode: "json" }).$type<{ tool: string; input: string }[]>(),
+    error: text("error"),
+    cancelRequested: integer("cancel_requested", { mode: "boolean" }).notNull().default(false),
+    createdAt: createdAt(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    finishedAt: integer("finished_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("agent_runs_status_idx").on(t.status)],
+);
+
+export const JOB_TYPES = ["fetch_trends", "video_download", "video_transcribe", "video_plan", "clip_render", "agent_run"] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const JOB_STATUSES = ["pendente", "rodando", "concluido", "falhou"] as const;

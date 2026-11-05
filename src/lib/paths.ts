@@ -11,8 +11,10 @@ export const VIDEO_DIRS = {
   trabalho: path.join(DATA_DIR, "videos", "trabalho"),
   saida: path.join(DATA_DIR, "videos", "saida"),
 } as const;
+/** Registro completo (stream-json) de cada pedido feito a um agente pelo painel. */
+export const AGENT_LOG_DIR = path.join(DATA_DIR, "agentes");
 
 export function ensureDataDirs(): void {
   mkdirSync(DATA_DIR, { recursive: true });
-  for (const dir of Object.values(VIDEO_DIRS)) mkdirSync(dir, { recursive: true });
+  for (const dir of [...Object.values(VIDEO_DIRS), AGENT_LOG_DIR]) mkdirSync(dir, { recursive: true });
 }

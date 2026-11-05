@@ -82,6 +82,9 @@ export default async function ProjetosPage() {
                 <a href={`vscode://file/${p.codeDir.replace(/\\/g, "/")}`} className="font-medium text-gold-deep hover:underline">
                   Abrir no VS Code →
                 </a>
+                <a href={`/agentes?projeto=${encodeURIComponent(p.name)}`} className="font-medium text-gold-deep hover:underline">
+                  Pedir ao agente →
+                </a>
                 {p.codeDir !== p.dir && (
                   <span className="text-xs text-body">código em {p.codeDir.slice(p.dir.length + 1)}</span>
                 )}

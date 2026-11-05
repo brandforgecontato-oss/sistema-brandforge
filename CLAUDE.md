@@ -2,12 +2,13 @@
 
 # BrandForge Central — painel único
 
-Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge: quadro de tarefas, monitor dos projetos/agentes Claude Code, tendências de IA/tech e (Fase 2) pipeline automático de vídeo.
+Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge: quadro de tarefas, monitor dos projetos/agentes Claude Code, tendências de IA/tech, pipeline automático de vídeo (Fase 2) e pedidos a agentes Claude Code pelo painel (Fase 3).
 
 ## Estado atual
 
 - Fase 1 pronta e testada no navegador (2026-11-04): Painel, Tarefas, Projetos, Tendências.
 - Fase 2 (vídeo) pronta e testada de ponta a ponta (2026-11-04): link/arquivo → yt-dlp → FFmpeg (áudio 16 kHz) → whisper.cpp na GPU → Claude propõe 1–4 cortes → usuário aprova/ajusta → FFmpeg renderiza 1080×1920 com legenda palavra a palavra e gancho. Teste: 87 s de vídeo = transcrição 18 s, planejamento 12 s, render de 58 s em 37 s.
+- Fase 3 (agentes) pronta e testada no navegador (2026-11-05): pedido → fila → Claude Code roda na pasta do projeto → painel mostra passos, resposta, arquivos alterados e bloqueios; continuar a conversa e cancelar funcionando.
 
 ## Como rodar
 
@@ -19,9 +20,9 @@ Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge
 - **Dados fora do OneDrive**: banco e vídeos em `DATA_DIR` (padrão `C:\BrandForge-dados`), para o OneDrive não sincronizar arquivos grandes nem travar o SQLite em WAL.
 - npm (não pnpm — pnpm não está no PATH desta máquina). `better-sqlite3` v13 por ter prebuild para Node 24 (sem Visual Studio Build Tools aqui).
 - Porta 3100 para não colidir com os outros projetos Next (3000).
-- **Monitor de agentes** = leitura passiva dos logs do Claude Code em `~/.claude/projects/<caminho codificado>/*.jsonl` (só os últimos 512 KB da sessão mais recente). Não controla nem dispara agentes — isso é a Fase 3.
+- **Monitor de agentes** (página Projetos) = leitura passiva dos logs do Claude Code em `~/.claude/projects/<caminho codificado>/*.jsonl` (só os últimos 512 KB da sessão mais recente).
 - Projeto cuja raiz só tem PDFs (ex.: `brandforge-site-oficial`) tem o código detectado na primeira subpasta com `.git`/`package.json`/`CLAUDE.md`.
-- Fila durável em `jobs` (`src/worker/queue.ts`): 3 tentativas com backoff; jobs presos em "rodando" voltam para a fila quando o worker reinicia. Pronta para os jobs de vídeo.
+- Fila durável em `jobs` (`src/worker/queue.ts`): 3 tentativas com backoff; jobs presos em "rodando" voltam para a fila quando o worker reinicia. O worker tem duas faixas: "geral" (tendências/vídeo) e "agentes" (um pedido por vez), para um agente longo não travar o resto.
 
 ## Pipeline de vídeo
 
@@ -34,13 +35,22 @@ Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge
 - Replanejar apaga só os cortes ainda "proposto"; renderizados ficam.
 - HyperFrames (animações) ainda não entrou — o render atual é só FFmpeg.
 
+## Agentes (Fase 3)
+
+- Página `/agentes`: escolhe projeto, modo e modelo. Código em [src/features/agents/](src/features/agents/), job `agent_run`.
+- Roda `claude.exe -p --output-format stream-json --verbose --permission-mode <plan|acceptEdits> --model … --strict-mcp-config` com `cwd` = pasta de código do projeto e o pedido no stdin. Usa a assinatura logada.
+- Modos: **Só planejar** = `plan` (só lê). **Editar arquivos** = `acceptEdits`: cria/edita arquivos, mas comandos de terminal são negados (sem ninguém para aprovar) e aparecem em "Bloqueado". Sem modo "tudo liberado" de propósito.
+- Registro completo em `DATA_DIRagentes<id>.jsonl`; a página lê esse arquivo. A sessão é persistida, então "continuar a conversa" usa `--resume <session_id>` e a conversa também aparece no Claude Code daquele projeto.
+- Pedido de agente **não é repetido** automaticamente: falha = 1 tentativa; se o worker reinicia no meio, o pedido vira erro. Cancelar = `taskkill /T /F` na árvore do processo.
+- `src/features/projects/dirs.ts` não é server-only (o worker usa); `projectCodeDir(nome)` só aceita pastas que existem em `PROJECTS_ROOT`.
+
 ## Estrutura
 
 - `src/db/` schema, cliente, migrações · `src/worker/` fila + loop
-- `src/features/{tasks,trends,projects,videos}/` queries (server-only), actions (Server Actions), lógica
+- `src/features/{tasks,trends,projects,videos,agents}/` queries (server-only), actions (Server Actions), lógica
 - `src/app/` páginas em PT-BR · `src/components/ui.tsx` peças visuais e formatação de datas
 
 ## Próximos passos
 
 - Vídeo: animações com HyperFrames; opção de recorte central (rosto) em vez de fundo desfocado.
-- Fase 3: disparar/acompanhar agentes pelo painel.
+- Agentes: avisar no celular quando um pedido terminar; modo com comandos liberados por lista (ex.: `npm run build`, `git status`).

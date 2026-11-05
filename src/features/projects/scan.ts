@@ -8,6 +8,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import { PROJECTS_ROOT } from "@/lib/paths";
+import { findCodeDir, listProjectDirs } from "./dirs";
+
+export { listProjectDirs };
 
 const run = promisify(execFile);
 
@@ -29,17 +32,6 @@ export type ProjectInfo = {
   claudeState: string | null;
   agent: AgentActivity | null;
 };
-
-const IGNORED = new Set(["node_modules", ".next", ".git"]);
-
-/** Pastas de projeto dentro de PROJECTS_ROOT (ignora arquivos soltos como PDFs). */
-export function listProjectDirs(): string[] {
-  if (!existsSync(PROJECTS_ROOT)) return [];
-  return readdirSync(PROJECTS_ROOT, { withFileTypes: true })
-    .filter((d) => d.isDirectory() && !d.name.startsWith(".") && !IGNORED.has(d.name))
-    .map((d) => d.name)
-    .sort((a, b) => a.localeCompare(b));
-}
 
 async function git(dir: string, args: string[]): Promise<string | null> {
   try {
@@ -69,21 +61,6 @@ function claudeSessionDir(dir: string): string | null {
   const encoded = dir.replace(/[:\\/ ]/g, "-").toLowerCase();
   const found = readdirSync(base).find((name) => name.toLowerCase() === encoded);
   return found ? path.join(base, found) : null;
-}
-
-const CODE_MARKERS = [".git", "package.json", "CLAUDE.md"];
-
-function looksLikeCode(dir: string): boolean {
-  return CODE_MARKERS.some((m) => existsSync(path.join(dir, m)));
-}
-
-/** A pasta do projeto, ou a primeira subpasta que tenha código, se a raiz só guarda PDFs. */
-function findCodeDir(dir: string): string {
-  if (looksLikeCode(dir)) return dir;
-  const child = readdirSync(dir, { withFileTypes: true }).find(
-    (d) => d.isDirectory() && !IGNORED.has(d.name) && !d.name.startsWith(".") && looksLikeCode(path.join(dir, d.name)),
-  );
-  return child ? path.join(dir, child.name) : dir;
 }
 
 /** Tira o markdown mais comum para o texto caber limpo num card. */

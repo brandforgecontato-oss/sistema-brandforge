@@ -2,9 +2,10 @@ import { desc, eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
 import { type JobType, jobs } from "@/db/schema";
+import { failInterruptedRuns, runAgent } from "@/features/agents/runner";
 import { fetchAllTrends } from "@/features/trends/fetch";
 import { downloadVideo, planVideo, renderClip, transcribeVideo } from "@/features/videos/pipeline";
-import { claimNext, complete, enqueue, fail, hasOpenJob, recoverStuck } from "./queue";
+import { type Lane, claimNext, complete, enqueue, fail, hasOpenJob, recoverStuck } from "./queue";
 
 const POLL_MS = 5_000;
 const TRENDS_INTERVAL_MS = Number(process.env.TRENDS_INTERVAL_MIN ?? 180) * 60_000;
@@ -19,7 +20,14 @@ const handlers: Record<JobType, (payload: Record<string, unknown>) => Promise<st
   video_transcribe: transcribeVideo,
   video_plan: planVideo,
   clip_render: renderClip,
+  agent_run: runAgent,
 };
+
+/** Agentes podem levar dezenas de minutos: têm faixa própria para não travar vídeos e tendências. */
+const LANES: { name: string; lane: Lane }[] = [
+  { name: "geral", lane: { except: ["agent_run"] } },
+  { name: "agentes", lane: { only: ["agent_run"] } },
+];
 
 /** Agenda a busca de tendências se a última terminou há mais tempo que o intervalo. */
 function scheduleTrends() {
@@ -36,9 +44,8 @@ function scheduleTrends() {
 
 let stopping = false;
 
-async function tick() {
-  scheduleTrends();
-  const job = claimNext();
+async function tick(lane: Lane) {
+  const job = claimNext(lane);
   if (!job) return;
   const started = Date.now();
   try {
@@ -47,18 +54,25 @@ async function tick() {
     console.log(`[worker] ${job.type}#${job.id} ok em ${Date.now() - started}ms — ${result}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    fail(job.id, job.attempts, message);
+    fail(job.id, job.attempts, message, job.type === "agent_run" ? 1 : undefined);
     console.error(`[worker] ${job.type}#${job.id} falhou (tentativa ${job.attempts}): ${message}`);
   }
 }
 
-async function main() {
-  const recovered = recoverStuck();
-  console.log(`[worker] iniciado. Tendências a cada ${TRENDS_INTERVAL_MS / 60_000} min.${recovered ? ` ${recovered} job(s) recuperado(s).` : ""}`);
+async function loop(name: string, lane: Lane) {
   while (!stopping) {
-    await tick().catch((e) => console.error("[worker] erro no ciclo:", e));
+    if (name === "geral") scheduleTrends();
+    await tick(lane).catch((e) => console.error(`[worker:${name}] erro no ciclo:`, e));
     await new Promise((r) => setTimeout(r, POLL_MS));
   }
+}
+
+async function main() {
+  const interrupted = failInterruptedRuns();
+  if (interrupted) console.log(`[worker] ${interrupted} pedido(s) a agente interrompido(s) pelo reinício — não serão repetidos.`);
+  const recovered = recoverStuck();
+  console.log(`[worker] iniciado. Tendências a cada ${TRENDS_INTERVAL_MS / 60_000} min.${recovered ? ` ${recovered} job(s) recuperado(s).` : ""}`);
+  await Promise.all(LANES.map(({ name, lane }) => loop(name, lane)));
   console.log("[worker] encerrado.");
 }
 
