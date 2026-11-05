@@ -22,7 +22,7 @@ Painel local (Next.js + SQLite) que junta num lugar só as frentes da BrandForge
 - Porta 3100 para não colidir com os outros projetos Next (3000).
 - **Monitor de agentes** (página Projetos) = leitura passiva dos logs do Claude Code em `~/.claude/projects/<caminho codificado>/*.jsonl` (só os últimos 512 KB da sessão mais recente).
 - Projeto cuja raiz só tem PDFs (ex.: `brandforge-site-oficial`) tem o código detectado na primeira subpasta com `.git`/`package.json`/`CLAUDE.md`.
-- `PROJECT_CODE_DIRS` no `.env` aponta um projeto para o código que vive fora do BrandForge. O site real fica em `C:UsersamancGitHubrandforge-site` (repo `brandforge-siteoficial`, deploy na Vercel); a pasta `brandforge-site-oficial/template_sites-main` no OneDrive é o template antigo de 30/10.
+- `PROJECT_CODE_DIRS` no `.env` aponta um projeto para o código que vive fora do BrandForge. O site real fica em `C:\Users\amanc\GitHub\brandforge-site` (repo `brandforge-siteoficial`, deploy na Vercel); a pasta `brandforge-site-oficial/template_sites-main` no OneDrive é o template antigo de 30/10.
 - Fila durável em `jobs` (`src/worker/queue.ts`): 3 tentativas com backoff; jobs presos em "rodando" voltam para a fila quando o worker reinicia. O worker tem duas faixas: "geral" (tendências/vídeo) e "agentes" (um pedido por vez), para um agente longo não travar o resto.
 
 ## Pipeline de vídeo
