@@ -10,7 +10,20 @@ import { VIDEO_DIRS } from "@/lib/paths";
 import { WHISPER_MODEL, runTool, toolPath } from "@/lib/tools";
 import { enqueue } from "@/worker/queue";
 import { buildAss } from "./captions";
-import { planClips } from "./plan";
+import { planClips, planShortEdit } from "./plan";
+import {
+  type Span,
+  detectPauses,
+  keptSpans,
+  mergeRemovals,
+  parseSilences,
+  pausesFromSilences,
+  remapWords,
+  snapRetake,
+  snapToSilences,
+  totalMs,
+  wordsForPrompt,
+} from "./short-edit";
 import { type Transcript, parseWhisperJson, snapToWords } from "./transcript";
 
 export function videoWorkDir(videoId: number): string {
@@ -154,6 +167,7 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
     const transcript = await loadTranscript(videoId);
     if (!transcript) throw new Error("transcrição não encontrada — transcreva de novo");
     if (transcript.words.length < 5) throw new Error("quase nenhuma fala detectada no vídeo");
+    if (video.kind === "curto") return planShort(videoId, video.title, video.guidance, transcript);
 
     const proposals = await planClips({
       title: video.title,
@@ -178,6 +192,42 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
   });
 }
 
+/** Silêncios reais do áudio (o whisper costuma adiantar o tempo das palavras em alguns décimos). */
+async function detectSilences(videoId: number, durationMs: number): Promise<Span[] | null> {
+  const wav = path.join(videoWorkDir(videoId), "audio.wav");
+  if (!existsSync(wav)) return null;
+  try {
+    const { stderr } = await runTool("ffmpeg", ["-hide_banner", "-nostats", "-i", wav, "-af", "silencedetect=noise=-35dB:d=0.2", "-f", "null", "-"]);
+    return parseSilences(stderr, durationMs);
+  } catch {
+    return null;
+  }
+}
+
+/** Vídeo curto: uma edição só, do começo ao fim, sem pausas e sem as tentativas regravadas. */
+async function planShort(videoId: number, title: string, guidance: string | null, transcript: Transcript): Promise<string> {
+  const plan = await planShortEdit({ title, words: wordsForPrompt(transcript), guidance, workDir: videoWorkDir(videoId) });
+  const endMs = transcript.durationMs || transcript.words[transcript.words.length - 1].endMs;
+  const silences = await detectSilences(videoId, endMs);
+  const retakes = plan.retakes
+    .map((r) => snapRetake(transcript, r.start, r.end, r.reason))
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+    .map((r) => (silences ? snapToSilences(r, silences, endMs) : r));
+  // Pausas pelos silêncios reais do áudio; se a medição falhar, usa os intervalos entre palavras do whisper.
+  const pauses = silences ? pausesFromSilences(silences, endMs) : detectPauses(transcript);
+  const removals = mergeRemovals([...pauses, ...retakes]);
+
+  db.transaction((tx) => {
+    tx.delete(clips).where(and(eq(clips.videoId, videoId), eq(clips.status, "proposto"))).run();
+    tx.insert(clips)
+      .values({ videoId, title: plan.title || title, hook: plan.hook, reason: null, startMs: 0, endMs, framing: "preencher", removals })
+      .run();
+  });
+  setVideo(videoId, { status: "revisar" });
+  const kept = totalMs(keptSpans(0, endMs, removals));
+  return `edição proposta: ${removals.length} corte(s), ${Math.round(endMs / 1000)} s → ${Math.round(kept / 1000)} s`;
+}
+
 // ---------- 4. Renderizar um corte aprovado ----------
 
 /**
@@ -185,13 +235,13 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
  * - "desfocado": vídeo inteiro centralizado sobre uma cópia ampliada e desfocada (nada é cortado).
  * - "preencher": amplia até cobrir a tela e recorta; `cropX` escolhe o trecho horizontal (0 esquerda … 100 direita).
  */
-export function buildFrameFilter(framing: "desfocado" | "preencher", cropX: number): string {
+export function buildFrameFilter(framing: "desfocado" | "preencher", cropX: number, input = "[0:v]"): string {
   if (framing === "preencher") {
     const x = (Math.min(100, Math.max(0, cropX)) / 100).toFixed(2);
-    return `[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*${x}:(ih-oh)/2,setsar=1,subtitles=legenda.ass[v]`;
+    return `${input}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*${x}:(ih-oh)/2,setsar=1,subtitles=legenda.ass[v]`;
   }
   return [
-    "[0:v]split=2[a][b]",
+    `${input}split=2[a][b]`,
     "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[bg]",
     "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
     "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,subtitles=legenda.ass[v]",
@@ -209,10 +259,11 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
   db.update(clips).set({ status: "renderizando", error: null }).where(eq(clips.id, clipId)).run();
   try {
     const transcript = await loadTranscript(video.id);
-    const clipMs = clip.endMs - clip.startMs;
-    const words = (transcript?.words ?? [])
-      .filter((w) => w.endMs > clip.startMs && w.startMs < clip.endMs)
-      .map((w) => ({ ...w, startMs: w.startMs - clip.startMs, endMs: w.endMs - clip.startMs }));
+    // Vídeo curto: emenda só os trechos mantidos. Corte de vídeo longo: um trecho contínuo.
+    const spans = video.kind === "curto" ? keptSpans(clip.startMs, clip.endMs, clip.removals) : [{ startMs: clip.startMs, endMs: clip.endMs }];
+    if (!spans.length) throw new Error("a edição cortou o vídeo inteiro — revise os cortes");
+    const clipMs = totalMs(spans);
+    const words = remapWords(transcript?.words ?? [], spans);
 
     const dir = path.join(videoWorkDir(video.id), `corte-${clip.id}`);
     mkdirSync(dir, { recursive: true });
@@ -221,7 +272,8 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
 
     const outputFile = `${slug(video.title)}-corte-${clip.id}.mp4`;
     const output = path.join(VIDEO_DIRS.saida, outputFile);
-    const filter = buildFrameFilter(clip.framing, clip.cropX);
+    const joined = spans.length > 1;
+    const filter = joined ? `${joinSpansFilter(spans)};${buildFrameFilter(clip.framing, clip.cropX, "[vj]")}` : buildFrameFilter(clip.framing, clip.cropX);
 
     await runTool(
       "ffmpeg",
@@ -229,10 +281,7 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
         "-y",
         "-loglevel",
         "error",
-        "-ss",
-        (clip.startMs / 1000).toFixed(3),
-        "-t",
-        (clipMs / 1000).toFixed(3),
+        ...(joined ? [] : ["-ss", (clip.startMs / 1000).toFixed(3), "-t", (clipMs / 1000).toFixed(3)]),
         "-i",
         source,
         "-filter_complex",
@@ -240,7 +289,7 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
         "-map",
         "[v]",
         "-map",
-        "0:a?",
+        joined ? "[aj]" : "0:a?",
         "-c:v",
         "libx264",
         "-preset",
@@ -269,4 +318,23 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
     db.update(clips).set({ status: "erro", error: message }).where(eq(clips.id, clipId)).run();
     throw error;
   }
+}
+
+/**
+ * Recorta cada trecho mantido (vídeo e áudio) e emenda tudo em [vj]/[aj].
+ * Um fade de 15 ms no áudio de cada emenda evita o "clique" do corte.
+ */
+function joinSpansFilter(spans: { startMs: number; endMs: number }[]): string {
+  const parts: string[] = [];
+  const labels: string[] = [];
+  spans.forEach((span, i) => {
+    const a = (span.startMs / 1000).toFixed(3);
+    const b = (span.endMs / 1000).toFixed(3);
+    const fadeOut = Math.max(0, (span.endMs - span.startMs) / 1000 - 0.015).toFixed(3);
+    parts.push(`[0:v]trim=start=${a}:end=${b},setpts=PTS-STARTPTS[v${i}]`);
+    parts.push(`[0:a]atrim=start=${a}:end=${b},asetpts=PTS-STARTPTS,afade=t=in:d=0.015,afade=t=out:st=${fadeOut}:d=0.015[a${i}]`);
+    labels.push(`[v${i}][a${i}]`);
+  });
+  parts.push(`${labels.join("")}concat=n=${spans.length}:v=1:a=1[vj][aj]`);
+  return parts.join(";");
 }

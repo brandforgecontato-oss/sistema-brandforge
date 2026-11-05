@@ -8,6 +8,21 @@ import { checkVideoTools } from "@/features/videos/tools";
 
 export const dynamic = "force-dynamic";
 
+/** Tipo de edição: o padrão é o vídeo curto gravado por você, editado inteiro. */
+function KindChoice() {
+  return (
+    <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-body">
+      <legend className="sr-only">Tipo de edição</legend>
+      <label className="flex items-center gap-1.5">
+        <input type="radio" name="kind" value="curto" defaultChecked /> Vídeo curto: editar inteiro
+      </label>
+      <label className="flex items-center gap-1.5">
+        <input type="radio" name="kind" value="longo" /> Vídeo longo: escolher cortes
+      </label>
+    </fieldset>
+  );
+}
+
 export default async function VideosPage() {
   const [tools, list, files] = await Promise.all([checkVideoTools(), listVideosWithClips(), listUnregisteredFiles()]);
   const missing = tools.filter((t) => !t.version);
@@ -17,7 +32,7 @@ export default async function VideosPage() {
     <>
       <PageHeader
         title="Vídeos"
-        subtitle="Link ou arquivo → transcrição → o Claude propõe os cortes → você aprova → Reels vertical legendado."
+        subtitle="Vídeo curto: a gravação inteira sai editada (sem pausas nem regravações, com legenda e gancho). Vídeo longo: o Claude propõe cortes. Você sempre revisa antes de renderizar."
       />
       <AutoRefresh active={active} />
 
@@ -32,6 +47,7 @@ export default async function VideosPage() {
           <form action={addVideoFromUrl} className="space-y-2">
             <input name="url" type="url" required placeholder="https://www.youtube.com/watch?v=…" className={`${inputClass} w-full`} />
             <input name="guidance" placeholder="Orientação opcional: ex. “foque nas dicas práticas”" className={`${inputClass} w-full`} />
+            <KindChoice />
             <button className={buttonClass}>Baixar e processar</button>
           </form>
           <p className="mt-2 text-xs text-body">YouTube, Instagram, TikTok e outros. Use só vídeos que você tem direito de usar.</p>
@@ -44,6 +60,9 @@ export default async function VideosPage() {
               <li key={f.name}>
                 <form action={importFile} className="flex flex-wrap items-center gap-2">
                   <input type="hidden" name="fileName" value={f.name} />
+                  <span className="basis-full">
+                    <KindChoice />
+                  </span>
                   <span className="min-w-0 flex-1 truncate text-sm" title={f.name}>
                     {f.name} <span className="text-xs text-body">· {f.sizeMb.toFixed(0)} MB</span>
                   </span>

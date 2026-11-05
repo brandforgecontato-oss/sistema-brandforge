@@ -70,6 +70,13 @@ export const VIDEO_STATUSES = [
 ] as const;
 export type VideoStatus = (typeof VIDEO_STATUSES)[number];
 
+/** "curto" = gravação sua, editada inteira; "longo" = o Claude escolhe trechos para virar cortes. */
+export const VIDEO_KINDS = ["curto", "longo"] as const;
+export type VideoKind = (typeof VIDEO_KINDS)[number];
+
+/** Trecho que a edição automática tira do vídeo; `keep: true` = você decidiu manter. */
+export type Removal = { startMs: number; endMs: number; kind: "pausa" | "repeticao"; reason?: string; keep?: boolean };
+
 /** Um vídeo bruto (baixado por URL ou colocado na pasta de entrada). */
 export const videos = sqliteTable("videos", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -78,6 +85,7 @@ export const videos = sqliteTable("videos", {
   /** Nome do arquivo dentro de VIDEO_DIRS.entrada. */
   fileName: text("file_name"),
   durationMs: integer("duration_ms"),
+  kind: text("kind", { enum: VIDEO_KINDS }).notNull().default("curto"),
   language: text("language").notNull().default("pt"),
   /** Orientação extra para o Claude ao escolher cortes (ex.: "foque nas dicas práticas"). */
   guidance: text("guidance"),
@@ -110,6 +118,8 @@ export const clips = sqliteTable(
     framing: text("framing", { enum: CLIP_FRAMINGS }).notNull().default("desfocado"),
     /** Posição horizontal do recorte no modo "preencher": 0 = esquerda, 50 = centro, 100 = direita. */
     cropX: integer("crop_x").notNull().default(50),
+    /** Só em vídeos curtos: pausas e trechos regravados que saem na edição. */
+    removals: text("removals", { mode: "json" }).$type<Removal[]>(),
     status: text("status", { enum: CLIP_STATUSES }).notNull().default("proposto"),
     outputFile: text("output_file"),
     error: text("error"),

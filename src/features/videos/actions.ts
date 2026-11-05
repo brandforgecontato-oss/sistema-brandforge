@@ -8,13 +8,18 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db/client";
-import { CLIP_FRAMINGS, type ClipFraming, clips, videos } from "@/db/schema";
+import { CLIP_FRAMINGS, type ClipFraming, VIDEO_KINDS, type VideoKind, clips, videos } from "@/db/schema";
 import { VIDEO_DIRS } from "@/lib/paths";
 import { enqueue } from "@/worker/queue";
 
 function refresh(videoId?: number) {
   revalidatePath("/videos");
   if (videoId) revalidatePath(`/videos/${videoId}`);
+}
+
+function readKind(formData: FormData): VideoKind {
+  const kind = String(formData.get("kind") ?? "curto") as VideoKind;
+  return VIDEO_KINDS.includes(kind) ? kind : "curto";
 }
 
 function clean(value: FormDataEntryValue | null): string | null {
@@ -27,7 +32,7 @@ export async function addVideoFromUrl(formData: FormData): Promise<void> {
   if (!url || !/^https?:\/\//i.test(url)) return;
   const video = db
     .insert(videos)
-    .values({ title: url, sourceUrl: url, guidance: clean(formData.get("guidance")) })
+    .values({ title: url, sourceUrl: url, kind: readKind(formData), guidance: clean(formData.get("guidance")) })
     .returning({ id: videos.id })
     .get();
   enqueue("video_download", { videoId: video.id });
@@ -44,6 +49,7 @@ export async function importFile(formData: FormData): Promise<void> {
     .values({
       title: fileName.replace(/\.[^.]+$/, ""),
       fileName,
+      kind: readKind(formData),
       guidance: clean(formData.get("guidance")),
     })
     .returning({ id: videos.id })
@@ -87,8 +93,12 @@ export async function updateClip(formData: FormData): Promise<void> {
   const cropX = Math.min(100, Math.max(0, Math.round(Number(formData.get("cropX") ?? 50)) || 0));
   const clip = db.select().from(clips).where(eq(clips.id, id)).get();
   if (!clip || !Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return;
+  // Vídeo curto: cada corte automático tem uma caixinha "cortar"; desmarcada = manter o trecho.
+  const removals = formData.has("removalsForm")
+    ? (clip.removals ?? []).map((r, i) => ({ ...r, keep: !formData.has(`cut_${i}`) }))
+    : clip.removals;
   db.update(clips)
-    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "", framing, cropX })
+    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "", framing, cropX, removals })
     .where(eq(clips.id, id))
     .run();
   refresh(clip.videoId);

@@ -6,6 +6,7 @@ import { discardClip, renderClipAction, replanVideo, retryVideo, updateClip } fr
 import { CLIP_STATUS, VIDEO_STATUS, formatDuration } from "@/features/videos/labels";
 import { loadTranscript } from "@/features/videos/pipeline";
 import { hasActiveVideoJobs, getVideoWithClips } from "@/features/videos/queries";
+import { keptSpans, totalMs } from "@/features/videos/short-edit";
 import { formatTimestamp } from "@/features/videos/transcript";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,7 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
   const active = hasActiveVideoJobs();
   const visibleClips = video.clips.filter((c) => c.status !== "descartado");
   const status = VIDEO_STATUS[video.status];
+  const short = video.kind === "curto";
 
   return (
     <>
@@ -29,7 +31,7 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
       </a>
       <PageHeader
         title={video.title}
-        subtitle={`${formatDuration(video.durationMs)}${video.sourceUrl ? ` · ${video.sourceUrl}` : ""}`}
+        subtitle={`${short ? "Vídeo curto · edição inteira" : "Vídeo longo · cortes"} · ${formatDuration(video.durationMs)}${video.sourceUrl ? ` · ${video.sourceUrl}` : ""}`}
         action={<Badge tone={status.tone}>{status.label}</Badge>}
       />
       <AutoRefresh active={active} />
@@ -49,13 +51,15 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
           {visibleClips.length === 0 && (
             <Card>
               <p className="text-sm text-body">
-                {video.status === "revisar" ? "Nenhum corte proposto." : "Os cortes aparecem aqui quando o Claude terminar."}
+                {video.status === "revisar" ? "Nada proposto." : short ? "A edição aparece aqui quando o Claude terminar." : "Os cortes aparecem aqui quando o Claude terminar."}
               </p>
             </Card>
           )}
 
           {visibleClips.map((clip) => {
             const cs = CLIP_STATUS[clip.status];
+            const finalMs = short ? totalMs(keptSpans(clip.startMs, clip.endMs, clip.removals)) : clip.endMs - clip.startMs;
+            const activeCuts = (clip.removals ?? []).filter((r) => !r.keep).length;
             return (
               <Card
                 key={clip.id}
@@ -77,14 +81,46 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
                   )}
                   <div className="min-w-0 flex-1 space-y-3 text-sm">
                     <p className="text-body">
-                      {formatTimestamp(clip.startMs)} → {formatTimestamp(clip.endMs)} ·{" "}
-                      {Math.round((clip.endMs - clip.startMs) / 1000)} s
+                      {short ? (
+                        <>
+                          Vídeo final: <strong className="text-ink">{Math.round(finalMs / 1000)} s</strong> (gravação de{" "}
+                          {Math.round((clip.endMs - clip.startMs) / 1000)} s, {activeCuts} corte(s) automático(s))
+                        </>
+                      ) : (
+                        <>
+                          {formatTimestamp(clip.startMs)} → {formatTimestamp(clip.endMs)} · {Math.round(finalMs / 1000)} s
+                        </>
+                      )}
                     </p>
                     {clip.reason && <p className="text-body">{clip.reason}</p>}
                     {clip.error && <p className="break-words text-xs text-ember">{clip.error}</p>}
 
                     <form action={updateClip} className="space-y-2 rounded-md bg-cream p-3">
                       <input type="hidden" name="id" value={clip.id} />
+                      {short && (clip.removals?.length ?? 0) > 0 && (
+                        <fieldset className="space-y-1">
+                          <input type="hidden" name="removalsForm" value="1" />
+                          <legend className="mb-1 text-xs text-body">
+                            Cortes automáticos. Desmarque para manter o trecho no vídeo.
+                          </legend>
+                          <ul className="max-h-64 space-y-1 overflow-y-auto pr-1">
+                            {clip.removals!.map((r, i) => (
+                              <li key={i}>
+                                <label className="flex items-start gap-2 text-xs">
+                                  <input type="checkbox" name={`cut_${i}`} defaultChecked={!r.keep} className="mt-0.5" />
+                                  <span className="font-mono text-gold-deep">
+                                    {formatTimestamp(r.startMs)}–{formatTimestamp(r.endMs)}
+                                  </span>
+                                  <span className={r.kind === "repeticao" ? "text-ink" : "text-body"}>
+                                    {r.kind === "repeticao" ? `regravação: ${r.reason ?? ""}` : "pausa"} ·{" "}
+                                    {((r.endMs - r.startMs) / 1000).toFixed(1)} s
+                                  </span>
+                                </label>
+                              </li>
+                            ))}
+                          </ul>
+                        </fieldset>
+                      )}
                       <label className="block text-xs text-body">
                         Gancho (texto no topo, primeiros 4 s)
                         <input name="hook" defaultValue={clip.hook} className={`${inputClass} mt-1 w-full`} />
@@ -157,18 +193,18 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
           )}
 
           {transcript && (
-            <Card title="Pedir outros cortes">
+            <Card title={short ? "Refazer a análise" : "Pedir outros cortes"}>
               <form action={replanVideo} className="space-y-2">
                 <input type="hidden" name="id" value={video.id} />
                 <textarea
                   name="guidance"
                   defaultValue={video.guidance ?? ""}
                   rows={3}
-                  placeholder="Ex.: cortes mais curtos, só a parte das dicas, tom mais polêmico…"
+                  placeholder={short ? "Ex.: gancho mais provocativo; não corte a parte do “olha só”…" : "Ex.: cortes mais curtos, só a parte das dicas, tom mais polêmico…"}
                   className={`${inputClass} w-full`}
                 />
                 <button className={buttonClass} disabled={active}>
-                  Replanejar com o Claude
+                  {short ? "Analisar de novo com o Claude" : "Replanejar com o Claude"}
                 </button>
               </form>
             </Card>

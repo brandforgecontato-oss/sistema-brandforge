@@ -4,8 +4,8 @@ export const VIDEO_STATUS: Record<VideoStatus, { label: string; tone: "neutral" 
   na_fila: { label: "na fila", tone: "neutral" },
   baixando: { label: "baixando…", tone: "gold" },
   transcrevendo: { label: "transcrevendo…", tone: "gold" },
-  planejando: { label: "Claude escolhendo cortes…", tone: "gold" },
-  revisar: { label: "cortes para revisar", tone: "good" },
+  planejando: { label: "Claude analisando…", tone: "gold" },
+  revisar: { label: "pronto para revisar", tone: "good" },
   erro: { label: "erro", tone: "bad" },
 };
 
