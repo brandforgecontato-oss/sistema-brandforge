@@ -60,7 +60,58 @@ export const trendItems = sqliteTable(
   (t) => [uniqueIndex("trend_items_link_uq").on(t.link), index("trend_items_status_idx").on(t.status)],
 );
 
-export const JOB_TYPES = ["fetch_trends"] as const;
+export const VIDEO_STATUSES = [
+  "na_fila",
+  "baixando",
+  "transcrevendo",
+  "planejando",
+  "revisar",
+  "erro",
+] as const;
+export type VideoStatus = (typeof VIDEO_STATUSES)[number];
+
+/** Um vídeo bruto (baixado por URL ou colocado na pasta de entrada). */
+export const videos = sqliteTable("videos", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  title: text("title").notNull(),
+  sourceUrl: text("source_url"),
+  /** Nome do arquivo dentro de VIDEO_DIRS.entrada. */
+  fileName: text("file_name"),
+  durationMs: integer("duration_ms"),
+  language: text("language").notNull().default("pt"),
+  /** Orientação extra para o Claude ao escolher cortes (ex.: "foque nas dicas práticas"). */
+  guidance: text("guidance"),
+  status: text("status", { enum: VIDEO_STATUSES }).notNull().default("na_fila"),
+  error: text("error"),
+  createdAt: createdAt(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+});
+
+export const CLIP_STATUSES = ["proposto", "na_fila", "renderizando", "pronto", "erro", "descartado"] as const;
+export type ClipStatus = (typeof CLIP_STATUSES)[number];
+
+/** Corte proposto pelo Claude; só é renderizado depois que você aprova. */
+export const clips = sqliteTable(
+  "clips",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    videoId: integer("video_id")
+      .notNull()
+      .references(() => videos.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    hook: text("hook").notNull(),
+    reason: text("reason"),
+    startMs: integer("start_ms").notNull(),
+    endMs: integer("end_ms").notNull(),
+    status: text("status", { enum: CLIP_STATUSES }).notNull().default("proposto"),
+    outputFile: text("output_file"),
+    error: text("error"),
+    createdAt: createdAt(),
+  },
+  (t) => [index("clips_video_idx").on(t.videoId)],
+);
+
+export const JOB_TYPES = ["fetch_trends", "video_download", "video_transcribe", "video_plan", "clip_render"] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const JOB_STATUSES = ["pendente", "rodando", "concluido", "falhou"] as const;

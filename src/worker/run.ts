@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { type JobType, jobs } from "@/db/schema";
 import { fetchAllTrends } from "@/features/trends/fetch";
+import { downloadVideo, planVideo, renderClip, transcribeVideo } from "@/features/videos/pipeline";
 import { claimNext, complete, enqueue, fail, hasOpenJob, recoverStuck } from "./queue";
 
 const POLL_MS = 5_000;
@@ -14,6 +15,10 @@ const handlers: Record<JobType, (payload: Record<string, unknown>) => Promise<st
     const errors = summary.errors.length ? ` | erros: ${summary.errors.join("; ")}` : "";
     return `${summary.newItems} itens novos de ${summary.sources} fontes${errors}`;
   },
+  video_download: downloadVideo,
+  video_transcribe: transcribeVideo,
+  video_plan: planVideo,
+  clip_render: renderClip,
 };
 
 /** Agenda a busca de tendências se a última terminou há mais tempo que o intervalo. */
