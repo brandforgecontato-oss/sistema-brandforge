@@ -27,11 +27,12 @@ function send(file: File, query: URLSearchParams, onPct: (pct: number) => void):
   });
 }
 
-export function VideoUpload() {
+export function VideoUpload({ scripts = [], defaultScriptId }: { scripts?: { id: number; label: string }[]; defaultScriptId?: number }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [kind, setKind] = useState<"curto" | "longo">("curto");
   const [guidance, setGuidance] = useState("");
+  const [scriptId, setScriptId] = useState(scripts.some((s) => s.id === defaultScriptId) ? String(defaultScriptId) : "");
   const [dragging, setDragging] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export function VideoUpload() {
         setProgress({ name: file.name, pct: 0, index, total: files.length });
         const query = new URLSearchParams({ nome: file.name, kind });
         if (guidance.trim()) query.set("orientacao", guidance.trim());
+        if (scriptId && files.length === 1) query.set("roteiro", scriptId);
         ids.push(await send(file, query, (pct) => setProgress((p) => (p ? { ...p, pct } : p))));
       }
     } catch (e) {
@@ -104,6 +106,19 @@ export function VideoUpload() {
         />
       </div>
 
+      {scripts.length > 0 && (
+        <label className="block text-xs text-body">
+          Roteiro que você seguiu (ajuda o Claude a achar regravações e imagens)
+          <select value={scriptId} onChange={(e) => setScriptId(e.target.value)} className={`${inputClass} mt-1 w-full`} disabled={!!progress}>
+            <option value="">Nenhum (gravei livre)</option>
+            {scripts.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <input
         value={guidance}
         onChange={(e) => setGuidance(e.target.value)}

@@ -36,6 +36,20 @@
       "when": 1793903302460,
       "tag": "0004_video_curto",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793909865664,
+      "tag": "0005_broll",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793985727898,
+      "tag": "0006_roteiros",
+      "breakpoints": true
     }
   ]
 }

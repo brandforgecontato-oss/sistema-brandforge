@@ -6,6 +6,7 @@ import { addVideoFromUrl, importFile } from "@/features/videos/actions";
 import { VIDEO_STATUS, formatDuration } from "@/features/videos/labels";
 import { hasActiveVideoJobs, listUnregisteredFiles, listVideosWithClips } from "@/features/videos/queries";
 import { checkVideoTools } from "@/features/videos/tools";
+import { listScriptsToRecord } from "@/features/scripts/queries";
 
 export const dynamic = "force-dynamic";
 
@@ -24,8 +25,10 @@ function KindChoice() {
   );
 }
 
-export default async function VideosPage() {
+export default async function VideosPage({ searchParams }: { searchParams: Promise<{ roteiro?: string }> }) {
+  const { roteiro } = await searchParams;
   const [tools, list, files] = await Promise.all([checkVideoTools(), listVideosWithClips(), listUnregisteredFiles()]);
+  const scripts = listScriptsToRecord().map((s) => ({ id: s.id, label: s.title ?? s.topic }));
   const missing = tools.filter((t) => !t.version);
   const active = hasActiveVideoJobs();
 
@@ -45,7 +48,7 @@ export default async function VideosPage() {
 
       <div className="mb-4 grid gap-4 md:grid-cols-2">
         <Card title="Enviar do computador">
-          <VideoUpload />
+          <VideoUpload scripts={scripts} defaultScriptId={Number(roteiro) || undefined} />
         </Card>
 
         <Card title="Baixar por link">

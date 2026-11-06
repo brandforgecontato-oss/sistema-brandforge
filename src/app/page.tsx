@@ -2,6 +2,7 @@ import { Badge, Card, PageHeader, formatDate, timeAgo } from "@/components/ui";
 import { scanAllProjects } from "@/features/projects/scan";
 import { TASK_STATUS_LABELS } from "@/features/tasks/labels";
 import { listFocusTasks, listOverdueTasks } from "@/features/tasks/queries";
+import { countScriptsToRecord } from "@/features/scripts/queries";
 import { countTrendsByStatus, latestNewTrends } from "@/features/trends/queries";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +20,7 @@ export default async function PainelPage() {
     .filter((p) => p.agent)
     .sort((a, b) => b.agent!.lastActivityAt.getTime() - a.agent!.lastActivityAt.getTime());
   const withoutGit = projects.filter((p) => !p.isGit);
+  const toRecord = countScriptsToRecord();
 
   return (
     <>
@@ -95,6 +97,9 @@ export default async function PainelPage() {
           </ul>
           <a href="/tendencias" className="mt-3 inline-block text-sm text-gold-deep hover:underline">
             Triar tendências → ({trendCounts.ideia} ideias de conteúdo salvas)
+          </a>
+          <a href="/roteiros" className="mt-3 ml-6 inline-block text-sm text-gold-deep hover:underline">
+            {toRecord} roteiro(s) pronto(s) para gravar →
           </a>
         </Card>
       </div>

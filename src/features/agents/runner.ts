@@ -19,8 +19,29 @@ function setRun(id: number, values: Partial<typeof agentRuns.$inferInsert>) {
 }
 
 /**
+ * Comandos liberados no modo "testar": só verificam o projeto ou leem o git.
+ * Tudo que não está aqui (commit, push, npm install, apagar arquivos…) continua negado.
+ */
+export const SAFE_COMMANDS = [
+  "npm run build",
+  "npm run lint",
+  "npm run typecheck",
+  "npm test",
+  "npm run test",
+  "npx tsc *",
+  "git status",
+  "git status *",
+  "git diff",
+  "git diff *",
+  "git log",
+  "git log *",
+  "git show *",
+];
+
+/**
  * "planejar" = modo plan do Claude Code (só lê). "editar" = acceptEdits: cria e altera arquivos,
  * mas qualquer comando de terminal é bloqueado (não há ninguém para aprovar em modo não interativo).
+ * "testar" = "editar" + os comandos de SAFE_COMMANDS.
  */
 function buildArgs(run: Run): string[] {
   return [
@@ -29,7 +50,8 @@ function buildArgs(run: Run): string[] {
     "stream-json",
     "--verbose",
     "--permission-mode",
-    run.mode === "editar" ? "acceptEdits" : "plan",
+    run.mode === "planejar" ? "plan" : "acceptEdits",
+    ...(run.mode === "testar" ? ["--allowedTools", ...SAFE_COMMANDS.map((c) => `Bash(${c})`)] : []),
     "--model",
     run.model,
     // Sem servidores MCP: evita pedidos de login e deixa o agente focado no código.

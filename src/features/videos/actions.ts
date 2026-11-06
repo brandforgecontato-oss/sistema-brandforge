@@ -8,9 +8,20 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
 import { db } from "@/db/client";
-import { CLIP_FRAMINGS, type ClipFraming, VIDEO_KINDS, type VideoKind, clips, videos } from "@/db/schema";
+import {
+  BROLL_LAYOUTS,
+  type BrollItem,
+  type BrollLayout,
+  CLIP_FRAMINGS,
+  type ClipFraming,
+  VIDEO_KINDS,
+  type VideoKind,
+  clips,
+  videos,
+} from "@/db/schema";
 import { VIDEO_DIRS } from "@/lib/paths";
 import { enqueue } from "@/worker/queue";
+import { hasPexelsKey } from "./broll";
 
 function refresh(videoId?: number) {
   revalidatePath("/videos");
@@ -83,7 +94,22 @@ export async function retryVideo(formData: FormData): Promise<void> {
   refresh(id);
 }
 
-export async function updateClip(formData: FormData): Promise<void> {
+/** Lê a seção de B-roll do formulário: caixinha = usar, termo de busca alterado = buscar de novo. */
+function readBroll(formData: FormData, items: BrollItem[] | null): BrollItem[] | null {
+  if (!formData.has("brollForm") || !items) return items;
+  return items.map((item, i) => {
+    const query = clean(formData.get(`brollq_${i}`)) ?? item.query;
+    const keep = formData.has(`broll_${i}`);
+    return query === item.query ? { ...item, keep } : { ...item, keep, query, file: null, pick: 0, error: undefined };
+  });
+}
+
+function needsFetch(items: BrollItem[] | null | undefined): boolean {
+  return !!items?.some((i) => i.keep !== false && !i.file);
+}
+
+/** Salva o formulário e devolve o corte atualizado (usado também pelos botões de B-roll). */
+function saveClipForm(formData: FormData) {
   const id = Number(formData.get("id"));
   const start = Number(String(formData.get("start")).replace(",", "."));
   const end = Number(String(formData.get("end")).replace(",", "."));
@@ -92,15 +118,36 @@ export async function updateClip(formData: FormData): Promise<void> {
   const framing = CLIP_FRAMINGS.includes(framingRaw) ? framingRaw : "desfocado";
   const cropX = Math.min(100, Math.max(0, Math.round(Number(formData.get("cropX") ?? 50)) || 0));
   const clip = db.select().from(clips).where(eq(clips.id, id)).get();
-  if (!clip || !Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return;
+  if (!clip || !Number.isFinite(start) || !Number.isFinite(end) || end - start < 1) return null;
   // Vídeo curto: cada corte automático tem uma caixinha "cortar"; desmarcada = manter o trecho.
   const removals = formData.has("removalsForm")
     ? (clip.removals ?? []).map((r, i) => ({ ...r, keep: !formData.has(`cut_${i}`) }))
     : clip.removals;
+  const layoutRaw = String(formData.get("brollLayout") ?? clip.brollLayout) as BrollLayout;
+  const brollLayout = BROLL_LAYOUTS.includes(layoutRaw) ? layoutRaw : clip.brollLayout;
+  const broll = readBroll(formData, clip.broll);
   db.update(clips)
-    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "", framing, cropX, removals })
+    .set({ startMs: Math.round(start * 1000), endMs: Math.round(end * 1000), hook: hook ?? "", framing, cropX, removals, broll, brollLayout })
     .where(eq(clips.id, id))
     .run();
+  return { ...clip, broll, brollLayout };
+}
+
+export async function updateClip(formData: FormData): Promise<void> {
+  const clip = saveClipForm(formData);
+  if (!clip) return;
+  if (needsFetch(clip.broll) && hasPexelsKey()) enqueue("broll_fetch", { clipId: clip.id });
+  refresh(clip.videoId);
+}
+
+/** Botão "Trocar" de um item de B-roll: salva o formulário e busca o próximo resultado. */
+export async function swapBroll(formData: FormData): Promise<void> {
+  const clip = saveClipForm(formData);
+  const index = Number(formData.get("swap"));
+  if (!clip?.broll?.[index]) return;
+  const broll = clip.broll.map((item, i) => (i === index ? { ...item, keep: true, file: null, pick: (item.pick ?? 0) + 1, error: undefined } : item));
+  db.update(clips).set({ broll }).where(eq(clips.id, clip.id)).run();
+  if (hasPexelsKey()) enqueue("broll_fetch", { clipId: clip.id });
   refresh(clip.videoId);
 }
 

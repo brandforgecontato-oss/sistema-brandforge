@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 
 import { AutoRefresh } from "@/components/auto-refresh";
 import { Badge, Card, PageHeader, buttonClass, ghostButtonClass, inputClass } from "@/components/ui";
-import { discardClip, renderClipAction, replanVideo, retryVideo, updateClip } from "@/features/videos/actions";
+import { discardClip, renderClipAction, replanVideo, retryVideo, swapBroll, updateClip } from "@/features/videos/actions";
+import { hasPexelsKey } from "@/features/videos/broll";
 import { CLIP_STATUS, VIDEO_STATUS, formatDuration } from "@/features/videos/labels";
 import { loadTranscript } from "@/features/videos/pipeline";
 import { hasActiveVideoJobs, getVideoWithClips } from "@/features/videos/queries";
@@ -12,6 +13,7 @@ import { formatTimestamp } from "@/features/videos/transcript";
 export const dynamic = "force-dynamic";
 
 const fileUrl = (pasta: "entrada" | "saida", nome: string) => `/api/arquivos/${pasta}/${encodeURIComponent(nome)}`;
+const brollUrl = (videoId: number, nome: string) => `/api/broll/${videoId}/${encodeURIComponent(nome)}`;
 
 export default async function VideoPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -23,6 +25,7 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
   const visibleClips = video.clips.filter((c) => c.status !== "descartado");
   const status = VIDEO_STATUS[video.status];
   const short = video.kind === "curto";
+  const pexels = hasPexelsKey();
 
   return (
     <>
@@ -35,6 +38,11 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
         action={<Badge tone={status.tone}>{status.label}</Badge>}
       />
       <AutoRefresh active={active} />
+      {video.scriptId && (
+        <a href={`/roteiros/${video.scriptId}`} className="mb-4 inline-block text-sm text-gold-deep hover:underline">
+          Gravado a partir de um roteiro →
+        </a>
+      )}
 
       {video.status === "erro" && (
         <div className="mb-6 rounded-md bg-ember-soft p-4 text-sm text-ember">
@@ -116,6 +124,76 @@ export default async function VideoPage({ params }: { params: Promise<{ id: stri
                                     {((r.endMs - r.startMs) / 1000).toFixed(1)} s
                                   </span>
                                 </label>
+                              </li>
+                            ))}
+                          </ul>
+                        </fieldset>
+                      )}
+                      {short && (clip.broll?.length ?? 0) > 0 && (
+                        <fieldset className="space-y-2 border-t border-line pt-2">
+                          <input type="hidden" name="brollForm" value="1" />
+                          <legend className="mb-1 text-xs text-body">
+                            Imagens de apoio (B-roll) sobre o que você fala. Desmarque para não usar; mude a busca (em inglês) ou troque.
+                          </legend>
+                          {!pexels && (
+                            <p className="rounded bg-ember-soft px-2 py-1 text-xs text-ember">
+                              Falta a chave do Pexels (PEXELS_API_KEY no .env). Os momentos já estão escolhidos; as imagens são baixadas quando a chave entrar.
+                            </p>
+                          )}
+                          <label className="block text-xs text-body">
+                            Como aparece
+                            <select name="brollLayout" defaultValue={clip.brollLayout} className={`${inputClass} mt-1 block`}>
+                              <option value="tela_cheia">Tela cheia por instantes</option>
+                              <option value="metade">Metade de cima (você embaixo)</option>
+                            </select>
+                          </label>
+                          <ul className="space-y-2">
+                            {clip.broll!.map((b, i) => (
+                              <li key={i} className="flex gap-2 rounded bg-paper p-2">
+                                <div className="aspect-[9/16] w-16 shrink-0 overflow-hidden rounded bg-ink">
+                                  {b.file &&
+                                    (b.media === "foto" ? (
+                                      <img src={brollUrl(video.id, b.file)} alt={b.topic} className="h-full w-full object-cover" />
+                                    ) : (
+                                      <video src={brollUrl(video.id, b.file)} muted loop autoPlay playsInline className="h-full w-full object-cover" />
+                                    ))}
+                                </div>
+                                <div className="min-w-0 flex-1 space-y-1 text-xs">
+                                  <label className="flex items-start gap-2">
+                                    <input type="checkbox" name={`broll_${i}`} defaultChecked={b.keep !== false} className="mt-0.5" />
+                                    <span>
+                                      <span className="font-mono text-gold-deep">
+                                        {formatTimestamp(b.startMs)}–{formatTimestamp(b.endMs)}
+                                      </span>{" "}
+                                      <span className="text-ink">{b.topic}</span>
+                                    </span>
+                                  </label>
+                                  <div className="flex gap-1">
+                                    <input name={`brollq_${i}`} defaultValue={b.query} className={`${inputClass} min-w-0 flex-1 !py-1 text-xs`} />
+                                    <button formAction={swapBroll} name="swap" value={i} className={ghostButtonClass} disabled={!pexels}>
+                                      Trocar
+                                    </button>
+                                  </div>
+                                  <p className="text-body">
+                                    {b.error ? (
+                                      <span className="text-ember">{b.error}</span>
+                                    ) : b.file ? (
+                                      <>
+                                        {b.media === "foto" ? "Foto (com zoom lento)" : "Vídeo"} de{" "}
+                                        <a href={b.sourceUrl} target="_blank" rel="noreferrer" className="underline">
+                                          {b.credit}
+                                        </a>{" "}
+                                        no Pexels
+                                      </>
+                                    ) : b.keep === false ? (
+                                      "não será usado"
+                                    ) : pexels ? (
+                                      "buscando…"
+                                    ) : (
+                                      "aguardando a chave do Pexels"
+                                    )}
+                                  </p>
+                                </div>
                               </li>
                             ))}
                           </ul>

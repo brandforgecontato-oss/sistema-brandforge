@@ -41,7 +41,7 @@ export function hasActiveVideoJobs(): boolean {
     .from(jobs)
     .where(
       and(
-        inArray(jobs.type, ["video_download", "video_transcribe", "video_plan", "clip_render"]),
+        inArray(jobs.type, ["video_download", "video_transcribe", "video_plan", "clip_render", "broll_fetch"]),
         inArray(jobs.status, ["pendente", "rodando"]),
       ),
     )

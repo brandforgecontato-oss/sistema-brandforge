@@ -5,16 +5,24 @@ import path from "node:path";
 import { and, eq } from "drizzle-orm";
 
 import { db } from "@/db/client";
-import { type VideoStatus, clips, videos } from "@/db/schema";
+import { type BrollLayout, type VideoStatus, clips, scripts, videos } from "@/db/schema";
+import { scriptSpeech } from "@/features/scripts/generate";
 import { VIDEO_DIRS } from "@/lib/paths";
 import { WHISPER_MODEL, runTool, toolPath } from "@/lib/tools";
 import { enqueue } from "@/worker/queue";
+import { brollDir, hasPexelsKey } from "./broll";
 import { buildAss } from "./captions";
 import { planClips, planShortEdit } from "./plan";
 import {
   type Span,
+  alignWordsToSilences,
+  brollFromPlan,
+  brollWindows,
   detectPauses,
   keptSpans,
+  LEVEL_WINDOW_MS,
+  parseLevels,
+  silencesFromLevels,
   mergeRemovals,
   parseSilences,
   pausesFromSilences,
@@ -167,7 +175,7 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
     const transcript = await loadTranscript(videoId);
     if (!transcript) throw new Error("transcrição não encontrada — transcreva de novo");
     if (transcript.words.length < 5) throw new Error("quase nenhuma fala detectada no vídeo");
-    if (video.kind === "curto") return planShort(videoId, video.title, video.guidance, transcript);
+    if (video.kind === "curto") return planShort(videoId, video.title, video.guidance, transcript, video.scriptId);
 
     const proposals = await planClips({
       title: video.title,
@@ -192,21 +200,47 @@ export async function planVideo(payload: Record<string, unknown>): Promise<strin
   });
 }
 
-/** Silêncios reais do áudio (o whisper costuma adiantar o tempo das palavras em alguns décimos). */
+/**
+ * Silêncios reais do áudio (o whisper costuma adiantar o tempo das palavras em alguns décimos).
+ * Mede o volume médio a cada 50 ms (16 kHz → 800 amostras) e acha o limite pelo ruído da própria gravação.
+ */
 async function detectSilences(videoId: number, durationMs: number): Promise<Span[] | null> {
-  const wav = path.join(videoWorkDir(videoId), "audio.wav");
-  if (!existsSync(wav)) return null;
+  const dir = videoWorkDir(videoId);
+  if (!existsSync(path.join(dir, "audio.wav"))) return null;
   try {
-    const { stderr } = await runTool("ffmpeg", ["-hide_banner", "-nostats", "-i", wav, "-af", "silencedetect=noise=-35dB:d=0.2", "-f", "null", "-"]);
-    return parseSilences(stderr, durationMs);
+    // Caminhos relativos (cwd = pasta do vídeo): o "file=" do filtro não aceita "C:\".
+    await runTool(
+      "ffmpeg",
+      [
+        "-hide_banner", "-nostats", "-y", "-i", "audio.wav",
+        "-af", `asetnsamples=${(16000 * LEVEL_WINDOW_MS) / 1000},astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=volume.txt`,
+        "-f", "null", "-",
+      ],
+      { cwd: dir, timeoutMs: 10 * 60_000 },
+    );
+    const { spans } = silencesFromLevels(parseLevels(await readFile(path.join(dir, "volume.txt"), "utf8")), durationMs);
+    return spans;
   } catch {
-    return null;
+    // Reserva: o detector do FFmpeg (bom para áudio limpo, sem ruído de fundo).
+    try {
+      const { stderr } = await runTool("ffmpeg", ["-hide_banner", "-nostats", "-i", path.join(dir, "audio.wav"), "-af", "silencedetect=noise=-35dB:d=0.2", "-f", "null", "-"]);
+      return parseSilences(stderr, durationMs);
+    } catch {
+      return null;
+    }
   }
 }
 
 /** Vídeo curto: uma edição só, do começo ao fim, sem pausas e sem as tentativas regravadas. */
-async function planShort(videoId: number, title: string, guidance: string | null, transcript: Transcript): Promise<string> {
-  const plan = await planShortEdit({ title, words: wordsForPrompt(transcript), guidance, workDir: videoWorkDir(videoId) });
+async function planShort(videoId: number, title: string, guidance: string | null, transcript: Transcript, scriptId: number | null): Promise<string> {
+  const script = scriptId ? db.select().from(scripts).where(eq(scripts.id, scriptId)).get() : undefined;
+  const plan = await planShortEdit({
+    title,
+    words: wordsForPrompt(transcript),
+    guidance,
+    workDir: videoWorkDir(videoId),
+    script: script?.beats?.length ? { speech: scriptSpeech(script.beats), hookText: script.hookText } : null,
+  });
   const endMs = transcript.durationMs || transcript.words[transcript.words.length - 1].endMs;
   const silences = await detectSilences(videoId, endMs);
   const retakes = plan.retakes
@@ -216,35 +250,39 @@ async function planShort(videoId: number, title: string, guidance: string | null
   // Pausas pelos silêncios reais do áudio; se a medição falhar, usa os intervalos entre palavras do whisper.
   const pauses = silences ? pausesFromSilences(silences, endMs) : detectPauses(transcript);
   const removals = mergeRemovals([...pauses, ...retakes]);
+  const broll = brollFromPlan(transcript, plan.broll ?? []);
 
-  db.transaction((tx) => {
+  const clip = db.transaction((tx) => {
     tx.delete(clips).where(and(eq(clips.videoId, videoId), eq(clips.status, "proposto"))).run();
-    tx.insert(clips)
-      .values({ videoId, title: plan.title || title, hook: plan.hook, reason: null, startMs: 0, endMs, framing: "preencher", removals })
-      .run();
+    return tx
+      .insert(clips)
+      .values({ videoId, title: plan.title || title, hook: plan.hook, reason: null, startMs: 0, endMs, framing: "preencher", removals, broll })
+      .returning({ id: clips.id })
+      .get();
   });
+  if (broll.length && hasPexelsKey()) enqueue("broll_fetch", { clipId: clip.id });
   setVideo(videoId, { status: "revisar" });
   const kept = totalMs(keptSpans(0, endMs, removals));
-  return `edição proposta: ${removals.length} corte(s), ${Math.round(endMs / 1000)} s → ${Math.round(kept / 1000)} s`;
+  return `edição proposta: ${removals.length} corte(s), ${Math.round(endMs / 1000)} s → ${Math.round(kept / 1000)} s, ${broll.length} B-roll`;
 }
 
 // ---------- 4. Renderizar um corte aprovado ----------
 
 /**
- * Monta o quadro 1080×1920 e queima a legenda.
+ * Monta o quadro 1080×1920 (saída [fr]; o B-roll e a legenda entram depois).
  * - "desfocado": vídeo inteiro centralizado sobre uma cópia ampliada e desfocada (nada é cortado).
  * - "preencher": amplia até cobrir a tela e recorta; `cropX` escolhe o trecho horizontal (0 esquerda … 100 direita).
  */
 export function buildFrameFilter(framing: "desfocado" | "preencher", cropX: number, input = "[0:v]"): string {
   if (framing === "preencher") {
     const x = (Math.min(100, Math.max(0, cropX)) / 100).toFixed(2);
-    return `${input}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*${x}:(ih-oh)/2,setsar=1,subtitles=legenda.ass[v]`;
+    return `${input}scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920:(iw-ow)*${x}:(ih-oh)/2,setsar=1[fr]`;
   }
   return [
     `${input}split=2[a][b]`,
     "[a]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=24:2,eq=brightness=-0.12[bg]",
     "[b]scale=1080:1920:force_original_aspect_ratio=decrease[fg]",
-    "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1,subtitles=legenda.ass[v]",
+    "[bg][fg]overlay=(W-w)/2:(H-h)/2,setsar=1[fr]",
   ].join(";");
 }
 
@@ -263,17 +301,32 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
     const spans = video.kind === "curto" ? keptSpans(clip.startMs, clip.endMs, clip.removals) : [{ startMs: clip.startMs, endMs: clip.endMs }];
     if (!spans.length) throw new Error("a edição cortou o vídeo inteiro — revise os cortes");
     const clipMs = totalMs(spans);
-    const words = remapWords(transcript?.words ?? [], spans);
+    // Legenda no tempo do som: corrige o adiantamento do whisper com os silêncios medidos na análise.
+    const volumeFile = path.join(videoWorkDir(video.id), "volume.txt");
+    const rawWords = transcript?.words ?? [];
+    const aligned = existsSync(volumeFile)
+      ? alignWordsToSilences(rawWords, silencesFromLevels(parseLevels(await readFile(volumeFile, "utf8")), transcript?.durationMs ?? clip.endMs).spans)
+      : rawWords;
+    const words = remapWords(aligned, spans);
 
     const dir = path.join(videoWorkDir(video.id), `corte-${clip.id}`);
     mkdirSync(dir, { recursive: true });
     // O filtro "subtitles" do FFmpeg se confunde com "C:\" no caminho; por isso roda dentro da pasta com nome relativo.
-    await writeFile(path.join(dir, "legenda.ass"), buildAss(words, clip.hook, clipMs), "utf8");
+    const layout = clip.brollLayout;
+    const bdir = brollDir(video.id);
+    const windows = brollWindows(clip.broll ?? [], spans).filter((w) => existsSync(path.join(bdir, w.item.file!)));
+    await writeFile(path.join(dir, "legenda.ass"), buildAss(words, clip.hook, clipMs, layout === "metade" ? windows : []), "utf8");
+    const brollInputs = windows.flatMap((w) => {
+      const dur = ((w.endMs - w.startMs) / 1000 + 0.2).toFixed(3);
+      const file = path.join(bdir, w.item.file!);
+      return w.item.media === "foto" ? ["-loop", "1", "-framerate", "30", "-t", dur, "-i", file] : ["-t", dur, "-i", file];
+    });
 
     const outputFile = `${slug(video.title)}-corte-${clip.id}.mp4`;
     const output = path.join(VIDEO_DIRS.saida, outputFile);
     const joined = spans.length > 1;
-    const filter = joined ? `${joinSpansFilter(spans)};${buildFrameFilter(clip.framing, clip.cropX, "[vj]")}` : buildFrameFilter(clip.framing, clip.cropX);
+    const frame = joined ? `${joinSpansFilter(spans)};${buildFrameFilter(clip.framing, clip.cropX, "[vj]")}` : buildFrameFilter(clip.framing, clip.cropX);
+    const filter = `${frame};${brollOverlayFilter(windows, layout)}`;
 
     await runTool(
       "ffmpeg",
@@ -284,6 +337,7 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
         ...(joined ? [] : ["-ss", (clip.startMs / 1000).toFixed(3), "-t", (clipMs / 1000).toFixed(3)]),
         "-i",
         source,
+        ...brollInputs,
         "-filter_complex",
         filter,
         "-map",
@@ -318,6 +372,45 @@ export async function renderClip(payload: Record<string, unknown>): Promise<stri
     db.update(clips).set({ status: "erro", error: message }).where(eq(clips.id, clipId)).run();
     throw error;
   }
+}
+
+/**
+ * Sobrepõe o B-roll ao quadro [fr] e queima a legenda, saindo em [v].
+ * Entrada i+1 do FFmpeg = janela i. "tela_cheia" cobre tudo; "metade" põe a mídia em cima e
+ * a pessoa (faixa central do quadro) embaixo, com um fio dourado na divisão.
+ */
+export function brollOverlayFilter(windows: { startMs: number; endMs: number; item: { media?: "video" | "foto" } }[], layout: BrollLayout): string {
+  if (!windows.length) return "[fr]subtitles=legenda.ass[v]";
+  const W = 1080;
+  const H = layout === "metade" ? 960 : 1920;
+  const parts: string[] = [];
+  const between = (w: { startMs: number; endMs: number }) => `between(t,${(w.startMs / 1000).toFixed(3)},${(w.endMs / 1000).toFixed(3)})`;
+  const any = windows.map(between).join("+");
+
+  let cur = "[fr]";
+  if (layout === "metade") {
+    parts.push("[fr]split=2[frm][frf]", `[frf]crop=${W}:960:0:300[face]`);
+    cur = "[frm]";
+  }
+  windows.forEach((w, i) => {
+    const t0 = (w.startMs / 1000).toFixed(3);
+    const frames = Math.ceil(((w.endMs - w.startMs) / 1000 + 0.2) * 30);
+    const fit =
+      w.item.media === "foto"
+        ? // Foto: zoom lento (Ken Burns) a partir de uma versão 2x para o movimento não tremer.
+          `scale=${W * 2}:${H * 2}:force_original_aspect_ratio=increase,crop=${W * 2}:${H * 2},zoompan=z='1+0.12*on/${frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${W}x${H}:fps=30`
+        : `scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},fps=30`;
+    parts.push(`[${i + 1}:v]${fit},setsar=1,format=yuv420p,setpts=PTS-STARTPTS+${t0}/TB[b${i}]`);
+    parts.push(`${cur}[b${i}]overlay=0:0:enable='${between(w)}':eof_action=pass[o${i}]`);
+    cur = `[o${i}]`;
+  });
+  if (layout === "metade") {
+    parts.push(`${cur}[face]overlay=0:960:enable='${any}'[om]`);
+    parts.push(`[om]drawbox=x=0:y=956:w=${W}:h=8:color=0xD4AF69:t=fill:enable='${any}'[ol]`);
+    cur = "[ol]";
+  }
+  parts.push(`${cur}subtitles=legenda.ass[v]`);
+  return parts.join(";");
 }
 
 /**

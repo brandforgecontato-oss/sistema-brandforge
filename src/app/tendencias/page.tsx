@@ -1,6 +1,8 @@
 import { Badge, Card, PageHeader, buttonClass, ghostButtonClass, inputClass, timeAgo } from "@/components/ui";
 import { TREND_STATUSES, type TrendStatus } from "@/db/schema";
 import { addTrendSource, fetchTrendsNow, setTrendStatus, toggleTrendSource } from "@/features/trends/actions";
+import { scriptFromTrend } from "@/features/scripts/actions";
+import { scriptIdsByTrend } from "@/features/scripts/queries";
 import { countTrendsByStatus, listTrendItems, listTrendSources } from "@/features/trends/queries";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +26,7 @@ export default async function TendenciasPage({ searchParams }: { searchParams: P
   const items = listTrendItems(tab);
   const counts = countTrendsByStatus();
   const sources = listTrendSources();
+  const scriptOf = scriptIdsByTrend();
 
   return (
     <>
@@ -58,6 +61,16 @@ export default async function TendenciasPage({ searchParams }: { searchParams: P
               </a>
               {item.summary && <p className="mt-1 line-clamp-2 text-sm text-body">{item.summary}</p>}
               <div className="mt-2 flex flex-wrap gap-1.5">
+                {scriptOf.has(item.id) ? (
+                  <a href={`/roteiros/${scriptOf.get(item.id)}`} className={ghostButtonClass}>
+                    Ver roteiro →
+                  </a>
+                ) : (
+                  <form action={scriptFromTrend}>
+                    <input type="hidden" name="trendId" value={item.id} />
+                    <button className={`${ghostButtonClass} border-gold text-gold-deep`}>Gerar roteiro</button>
+                  </form>
+                )}
                 {ACTIONS.filter((a) => a.to !== item.status).map((a) => (
                   <form key={a.to} action={setTrendStatus}>
                     <input type="hidden" name="id" value={item.id} />

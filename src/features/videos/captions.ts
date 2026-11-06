@@ -46,8 +46,10 @@ function chunkWords(words: Word[]): Word[][] {
  * Gera a legenda .ass de um corte: gancho no topo nos primeiros segundos e legenda
  * palavra a palavra embaixo, com a palavra falada destacada em dourado.
  * `words` devem estar com tempos relativos ao início do corte.
+ * `midRanges`: trechos em que a tela está dividida (B-roll em cima); a legenda sobe para a divisão.
  */
-export function buildAss(words: Word[], hook: string, clipMs: number): string {
+export function buildAss(words: Word[], hook: string, clipMs: number, midRanges: { startMs: number; endMs: number }[] = []): string {
+  const styleAt = (ms: number) => (midRanges.some((r) => ms >= r.startMs && ms < r.endMs) ? "LegendaMeio" : "Legenda");
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: 1080
@@ -58,6 +60,7 @@ ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
 Style: Legenda,Arial,84,${WHITE},${WHITE},${INK},&H80000000,-1,0,0,0,100,100,0,0,1,7,0,2,80,80,460,1
+Style: LegendaMeio,Arial,76,${WHITE},${WHITE},${INK},&H80000000,-1,0,0,0,100,100,0,0,1,7,0,2,80,80,910,1
 Style: Gancho,Arial,70,${INK},${INK},${GOLD},${GOLD},-1,0,0,0,100,100,0,0,3,22,0,8,90,90,230,1
 
 [Events]
@@ -86,7 +89,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           return i === wi ? `{\\c${GOLD}&}${t}{\\c${WHITE}&}` : t;
         })
         .join(" ");
-      lines.push(`Dialogue: 0,${assTime(Math.max(0, start))},${assTime(Math.min(clipMs, end))},Legenda,,0,0,0,,${text}`);
+      lines.push(`Dialogue: 0,${assTime(Math.max(0, start))},${assTime(Math.min(clipMs, end))},${styleAt(start)},,0,0,0,,${text}`);
     });
   });
 

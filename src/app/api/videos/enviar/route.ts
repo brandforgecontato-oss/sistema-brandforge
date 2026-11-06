@@ -4,10 +4,11 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 
+import { eq } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { db } from "@/db/client";
-import { VIDEO_KINDS, type VideoKind, videos } from "@/db/schema";
+import { VIDEO_KINDS, type VideoKind, scripts, videos } from "@/db/schema";
 import { VIDEO_DIRS, ensureDataDirs } from "@/lib/paths";
 import { enqueue } from "@/worker/queue";
 
@@ -45,6 +46,8 @@ export async function POST(request: Request) {
   const kindRaw = url.searchParams.get("kind") as VideoKind;
   const kind: VideoKind = VIDEO_KINDS.includes(kindRaw) ? kindRaw : "curto";
   const guidance = url.searchParams.get("orientacao")?.trim() || null;
+  const scriptRaw = Number(url.searchParams.get("roteiro"));
+  const script = scriptRaw > 0 ? db.select({ id: scripts.id }).from(scripts).where(eq(scripts.id, scriptRaw)).get() : undefined;
 
   ensureDataDirs();
   const fileName = freeName(original);
@@ -61,9 +64,13 @@ export async function POST(request: Request) {
 
   const video = db
     .insert(videos)
-    .values({ title: fileName.replace(/\.[^.]+$/, ""), fileName, kind, guidance })
+    .values({ title: fileName.replace(/\.[^.]+$/, ""), fileName, kind, guidance, scriptId: script?.id ?? null })
     .returning({ id: videos.id })
     .get();
+  if (script) {
+    db.update(scripts).set({ status: "gravado", videoId: video.id, updatedAt: new Date() }).where(eq(scripts.id, script.id)).run();
+    revalidatePath("/roteiros");
+  }
   enqueue("video_transcribe", { videoId: video.id });
   revalidatePath("/videos");
   return Response.json({ id: video.id, fileName });

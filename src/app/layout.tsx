@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: "/projetos", label: "Projetos" },
   { href: "/agentes", label: "Agentes" },
   { href: "/tendencias", label: "Tendências" },
+  { href: "/roteiros", label: "Roteiros" },
   { href: "/videos", label: "Vídeos" },
 ];
 

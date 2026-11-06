@@ -3,7 +3,9 @@ import { desc, eq } from "drizzle-orm";
 import { db } from "@/db/client";
 import { type JobType, jobs } from "@/db/schema";
 import { failInterruptedRuns, runAgent } from "@/features/agents/runner";
+import { generateScript } from "@/features/scripts/generate";
 import { fetchAllTrends } from "@/features/trends/fetch";
+import { fetchBroll } from "@/features/videos/broll";
 import { downloadVideo, planVideo, renderClip, transcribeVideo } from "@/features/videos/pipeline";
 import { type Lane, claimNext, complete, enqueue, fail, hasOpenJob, recoverStuck } from "./queue";
 
@@ -20,13 +22,19 @@ const handlers: Record<JobType, (payload: Record<string, unknown>) => Promise<st
   video_transcribe: transcribeVideo,
   video_plan: planVideo,
   clip_render: renderClip,
+  broll_fetch: fetchBroll,
+  script_generate: generateScript,
   agent_run: runAgent,
 };
 
-/** Agentes podem levar dezenas de minutos: têm faixa própria para não travar vídeos e tendências. */
+/**
+ * Agentes podem levar dezenas de minutos e renders alguns minutos: cada um tem faixa própria
+ * para não travar o resto. Roteiros (~20 s) têm a sua para responder logo.
+ */
 const LANES: { name: string; lane: Lane }[] = [
-  { name: "geral", lane: { except: ["agent_run"] } },
+  { name: "geral", lane: { except: ["agent_run", "script_generate"] } },
   { name: "agentes", lane: { only: ["agent_run"] } },
+  { name: "roteiros", lane: { only: ["script_generate"] } },
 ];
 
 /** Agenda a busca de tendências se a última terminou há mais tempo que o intervalo. */

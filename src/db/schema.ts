@@ -60,6 +60,37 @@ export const trendItems = sqliteTable(
   (t) => [uniqueIndex("trend_items_link_uq").on(t.link), index("trend_items_status_idx").on(t.status)],
 );
 
+export const SCRIPT_STATUSES = ["gerando", "rascunho", "gravado", "erro"] as const;
+export type ScriptStatus = (typeof SCRIPT_STATUSES)[number];
+
+/** Um bloco do roteiro: o que falar e o texto que aparece na tela nesse momento. */
+export type ScriptBeat = { fala: string; tela: string };
+
+/** Roteiro de vídeo curto para gravar, gerado pelo Claude a partir de uma tendência ou de um tema livre. */
+export const scripts = sqliteTable(
+  "scripts",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    topic: text("topic").notNull(),
+    trendId: integer("trend_id").references(() => trendItems.id, { onDelete: "set null" }),
+    guidance: text("guidance"),
+    status: text("status", { enum: SCRIPT_STATUSES }).notNull().default("gerando"),
+    title: text("title"),
+    /** Texto de tela dos primeiros segundos. */
+    hookText: text("hook_text"),
+    beats: text("beats", { mode: "json" }).$type<ScriptBeat[]>(),
+    cta: text("cta"),
+    caption: text("caption"),
+    hashtags: text("hashtags"),
+    estimatedSec: integer("estimated_sec"),
+    videoId: integer("video_id"),
+    error: text("error"),
+    createdAt: createdAt(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }),
+  },
+  (t) => [index("scripts_status_idx").on(t.status)],
+);
+
 export const VIDEO_STATUSES = [
   "na_fila",
   "baixando",
@@ -77,6 +108,28 @@ export type VideoKind = (typeof VIDEO_KINDS)[number];
 /** Trecho que a edição automática tira do vídeo; `keep: true` = você decidiu manter. */
 export type Removal = { startMs: number; endMs: number; kind: "pausa" | "repeticao"; reason?: string; keep?: boolean };
 
+/**
+ * Imagem/vídeo de apoio (B-roll) mostrado enquanto a pessoa fala.
+ * Tempos na gravação ORIGINAL (são remapeados para o vídeo editado no render).
+ * `file` fica na pasta de trabalho do vídeo (broll/); vazio = ainda não baixado.
+ */
+export type BrollItem = {
+  startMs: number;
+  endMs: number;
+  /** Termos de busca em inglês (o banco de imagens acha mais assim). */
+  query: string;
+  /** O que a fala diz nesse momento, em português (só para mostrar na revisão). */
+  topic: string;
+  keep?: boolean;
+  file?: string | null;
+  media?: "video" | "foto";
+  /** Página do resultado no banco de imagens; "trocar" pega o próximo. */
+  pick?: number;
+  credit?: string;
+  sourceUrl?: string;
+  error?: string;
+};
+
 /** Um vídeo bruto (baixado por URL ou colocado na pasta de entrada). */
 export const videos = sqliteTable("videos", {
   id: integer("id").primaryKey({ autoIncrement: true }),
@@ -89,6 +142,8 @@ export const videos = sqliteTable("videos", {
   language: text("language").notNull().default("pt"),
   /** Orientação extra para o Claude ao escolher cortes (ex.: "foque nas dicas práticas"). */
   guidance: text("guidance"),
+  /** Roteiro que a pessoa seguiu ao gravar (ajuda o Claude a achar regravações e B-roll). */
+  scriptId: integer("script_id"),
   status: text("status", { enum: VIDEO_STATUSES }).notNull().default("na_fila"),
   error: text("error"),
   createdAt: createdAt(),
@@ -98,6 +153,10 @@ export const videos = sqliteTable("videos", {
 /** "desfocado" = vídeo inteiro sobre fundo desfocado; "preencher" = recorta para ocupar a tela toda (9:16). */
 export const CLIP_FRAMINGS = ["desfocado", "preencher"] as const;
 export type ClipFraming = (typeof CLIP_FRAMINGS)[number];
+
+/** Como o B-roll aparece: cobrindo a tela toda, ou na metade de cima com a pessoa embaixo. */
+export const BROLL_LAYOUTS = ["tela_cheia", "metade"] as const;
+export type BrollLayout = (typeof BROLL_LAYOUTS)[number];
 
 export const CLIP_STATUSES = ["proposto", "na_fila", "renderizando", "pronto", "erro", "descartado"] as const;
 export type ClipStatus = (typeof CLIP_STATUSES)[number];
@@ -120,6 +179,8 @@ export const clips = sqliteTable(
     cropX: integer("crop_x").notNull().default(50),
     /** Só em vídeos curtos: pausas e trechos regravados que saem na edição. */
     removals: text("removals", { mode: "json" }).$type<Removal[]>(),
+    broll: text("broll", { mode: "json" }).$type<BrollItem[]>(),
+    brollLayout: text("broll_layout", { enum: BROLL_LAYOUTS }).notNull().default("tela_cheia"),
     status: text("status", { enum: CLIP_STATUSES }).notNull().default("proposto"),
     outputFile: text("output_file"),
     error: text("error"),
@@ -128,7 +189,7 @@ export const clips = sqliteTable(
   (t) => [index("clips_video_idx").on(t.videoId)],
 );
 
-export const AGENT_MODES = ["planejar", "editar"] as const;
+export const AGENT_MODES = ["planejar", "editar", "testar"] as const;
 export type AgentMode = (typeof AGENT_MODES)[number];
 
 export const AGENT_RUN_STATUSES = ["na_fila", "rodando", "concluido", "erro", "cancelado"] as const;
@@ -165,7 +226,7 @@ export const agentRuns = sqliteTable(
   (t) => [index("agent_runs_status_idx").on(t.status)],
 );
 
-export const JOB_TYPES = ["fetch_trends", "video_download", "video_transcribe", "video_plan", "clip_render", "agent_run"] as const;
+export const JOB_TYPES = ["fetch_trends", "video_download", "video_transcribe", "video_plan", "clip_render", "broll_fetch", "script_generate", "agent_run"] as const;
 export type JobType = (typeof JOB_TYPES)[number];
 
 export const JOB_STATUSES = ["pendente", "rodando", "concluido", "falhou"] as const;

@@ -13,6 +13,10 @@ export const RUN_STATUS: Record<AgentRunStatus, { label: string; tone: Tone }> =
 export const MODE_INFO: Record<AgentMode, { label: string; hint: string }> = {
   planejar: { label: "Só planejar", hint: "lê o código e responde com um plano — não altera nada" },
   editar: { label: "Editar arquivos", hint: "cria e altera arquivos; comandos no terminal ficam bloqueados" },
+  testar: {
+    label: "Editar e testar",
+    hint: "edita e pode rodar só build, lint, testes e git status/diff/log; commit, push e instalar pacotes continuam bloqueados",
+  },
 };
 
 export const MODELS = [

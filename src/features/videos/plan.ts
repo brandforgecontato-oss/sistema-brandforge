@@ -86,7 +86,12 @@ export async function planClips(opts: {
 
 // ---------- Vídeo curto: editar a gravação inteira ----------
 
-export type ShortEditPlan = { title: string; hook: string; retakes: { start: number; end: number; reason: string }[] };
+export type ShortEditPlan = {
+  title: string;
+  hook: string;
+  retakes: { start: number; end: number; reason: string }[];
+  broll: { start: number; end: number; query: string; topic: string }[];
+};
 
 const SHORT_SCHEMA = {
   type: "object",
@@ -106,24 +111,63 @@ const SHORT_SCHEMA = {
         required: ["start", "end", "reason"],
       },
     },
+    broll: {
+      type: "array",
+      description: "Momentos para mostrar uma imagem/vídeo de apoio sobre o que está sendo dito",
+      items: {
+        type: "object",
+        properties: {
+          start: { type: "number", description: "Tempo de início (s) da primeira palavra do trecho" },
+          end: { type: "number", description: "Tempo de início (s) da última palavra do trecho" },
+          query: { type: "string", description: "Busca em INGLÊS para banco de vídeos, 2 a 5 palavras concretas e filmáveis" },
+          topic: { type: "string", description: "O que a fala diz nesse momento, em português, até 8 palavras" },
+        },
+        required: ["start", "end", "query", "topic"],
+      },
+    },
   },
-  required: ["title", "hook", "retakes"],
+  required: ["title", "hook", "retakes", "broll"],
 };
 
-function buildShortPrompt(title: string, words: string, guidance: string | null): string {
+export type ScriptReference = { speech: string; hookText: string | null };
+
+function scriptSection(script: ScriptReference | null | undefined): string {
+  if (!script) return "";
+  const hook = script.hookText ? ` O texto de tela previsto é "${script.hookText}"; use-o como "hook" se ainda combinar com o que foi falado.` : "";
+  return `
+A pessoa gravou seguindo o roteiro abaixo (pode ter improvisado um pouco). Use-o para reconhecer regravações: um trecho do roteiro falado duas vezes indica que a primeira tentativa saiu errada. Mas a referência é sempre a FALA gravada; não corte o que só não estava no roteiro.${hook}
+Roteiro:
+${script.speech}
+`;
+}
+
+function buildShortPrompt(title: string, words: string, guidance: string | null, script?: ScriptReference | null): string {
   return `Você é editor de vídeos curtos da BrandForge, uma agência de marca. A pessoa gravou sozinha um vídeo curto ("${title}") para Reels/TikTok. Abaixo está a fala, palavra a palavra, cada uma com o tempo de início em segundos (formato tempo:palavra).
 
 Tarefas:
 1. "retakes": encontre os trechos que a própria pessoa descartou ao gravar. Por exemplo: uma frase começada e repetida logo depois, "não, pera", "de novo", "vou repetir", uma palavra errada e corrigida na hora. Remova a tentativa que falhou, junto com a fala de correção ("não, pera, de novo"), e mantenha a última versão completa. Na dúvida, NÃO marque: cortar fala boa é pior que deixar uma repetição. Não marque pausas ou silêncios, que já são tratados à parte. Use os tempos exatos das palavras.
 2. "hook": texto que aparece na tela nos primeiros segundos, com até 8 palavras, em português, direto, sem emojis e sem prometer o que o vídeo não entrega.
 3. "title": nome interno curto do vídeo.
-${guidance ? `\nOrientação do usuário para este vídeo: ${guidance}\n` : ""}
+4. "broll": momentos em que uma imagem ou vídeo de apoio (B-roll) cobre a tela enquanto a voz continua, ilustrando o que está sendo dito. Regras:
+   - Cada trecho dura de 2 a 4 segundos de fala (do início da primeira palavra até o início da última).
+   - Mais ou menos um a cada 6 a 10 segundos de fala; nunca colados um no outro (deixe ao menos 3 s com a pessoa entre eles).
+   - Nada nos primeiros 4 segundos (é o gancho, com o rosto) e nada sobre trechos marcados em "retakes".
+   - Escolha momentos com algo concreto para mostrar: objeto, lugar, ação, profissão, cena ("celular com notificações", "pessoa frustrada no computador"). Evite ideias abstratas que nenhuma filmagem de banco mostra.
+   - "query": 2 a 5 palavras em inglês, descrevendo a CENA, como num banco de vídeos (ex.: "woman typing laptop office", "coffee shop owner counter"). Sem nomes de marcas ou pessoas.
+   - Lista vazia se o vídeo for muito curto ou não houver nada visual para mostrar.
+${guidance ? `\nOrientação do usuário para este vídeo: ${guidance}\n` : ""}${scriptSection(script)}
 Fala:
 ${words}`;
 }
 
 /** Pede ao Claude as regravações a cortar e o gancho de um vídeo curto. */
-export async function planShortEdit(opts: { title: string; words: string; guidance: string | null; workDir: string }): Promise<ShortEditPlan> {
+export async function planShortEdit(opts: {
+  title: string;
+  words: string;
+  guidance: string | null;
+  workDir: string;
+  script?: ScriptReference | null;
+}): Promise<ShortEditPlan> {
   const { stdout } = await runTool(
     "claude",
     [
@@ -141,7 +185,7 @@ export async function planShortEdit(opts: { title: string; words: string; guidan
       "--json-schema",
       JSON.stringify(SHORT_SCHEMA),
     ],
-    { cwd: opts.workDir, timeoutMs: 5 * 60_000, input: buildShortPrompt(opts.title, opts.words, opts.guidance) },
+    { cwd: opts.workDir, timeoutMs: 5 * 60_000, input: buildShortPrompt(opts.title, opts.words, opts.guidance, opts.script) },
   );
   const parsed = JSON.parse(stdout) as { is_error?: boolean; subtype?: string; result?: string; structured_output?: ShortEditPlan };
   if (parsed.is_error) throw new Error(`Claude respondeu com erro (${parsed.subtype}): ${parsed.result ?? ""}`.slice(0, 500));
